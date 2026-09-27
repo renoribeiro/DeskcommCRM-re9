@@ -55,7 +55,7 @@ export function erroParaOCliente(err: unknown, requestId: string): ErroTraduzido
   if (err instanceof ApiError) {
     // Só o 500 (`internal_error`) é "inesperado": é onde os handlers põem o
     // `error.message` do PostgREST. 503/422/409… são recusas escritas para
-    // quem lê (`cpf_encryption_unavailable`, `waha_not_configured`).
+    // quem lê (`cpf_encryption_unavailable`, `base_url_recusada`).
     return err.status === 500 || err.code === "internal_error"
       ? { mensagem: mensagemGenerica(requestId), inesperado: true, original: err.message }
       : { mensagem: err.message, inesperado: false, original: err.message };

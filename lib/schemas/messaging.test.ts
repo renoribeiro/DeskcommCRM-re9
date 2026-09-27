@@ -61,7 +61,8 @@ describe("sendMessageSchema", () => {
   });
 
   // Auditoria P1: `media_url` do cliente virava proxy autenticado para a API
-  // do WAHA (compartilhada por todas as organizações) no GET /media.
+  // do gateway de canal da instalação (compartilhado por todas as organizações)
+  // no GET /media.
   it("rejeita payload só com media_url", () => {
     const r = sendMessageSchema.safeParse({
       conversation_id: "11111111-1111-4111-8111-111111111111",
@@ -76,7 +77,7 @@ describe("sendMessageSchema", () => {
       conversation_id: "11111111-1111-4111-8111-111111111111",
       type: "image",
       body: "legenda",
-      media_url: "http://waha:3000/api/sessions",
+      media_url: "http://gateway-do-canal:3000/api/sessions",
     });
     expect(r.success).toBe(false);
     if (!r.success) {

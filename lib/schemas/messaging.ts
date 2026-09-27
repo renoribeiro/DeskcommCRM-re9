@@ -77,7 +77,7 @@ export const sendMessageSchema = z
      *
      * `media_url` vinda do cliente virava, na linha da mensagem, uma URL que o
      * `GET /messages/{id}/media` buscava pelo adapter do canal — com a API key do
-     * WAHA, que é da instalação e serve a TODAS as organizações (auditoria P1,
+     * gateway de canal, que é da instalação e serve a TODAS as organizações (auditoria P1,
      * `docs/imobiliario/04-auditoria-seguranca-e-qualidade.md`). E o envio nunca a
      * usou: o transporte só sai de `media_storage_path`. Mídia de saída sobe por
      * `POST /api/v1/conversations/{id}/media` e chega aqui como
