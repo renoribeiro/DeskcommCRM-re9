@@ -18,12 +18,21 @@ if [ -z "${INTERNAL_SECRET:-}" ]; then
   exit 1
 fi
 
-# Constante, não configuração: `app` é o nome do serviço na rede interna do
-# compose, e o scheduler não fala com mais nada. A primeira versão disto lia um
-# `SCHEDULER_APP_ORIGIN` que o compose nunca repassava e nenhum template
-# documentava — controle decorativo, que é pior que controle nenhum: quem o
-# encontrasse no código o definiria no `.env` e não veria efeito.
-APP_ORIGIN="http://app:3000"
+# A origem do app na rede interna do compose. O padrão é `http://app:3000`, o
+# nome do serviço, e é o que o kit usa. `SCHEDULER_APP_ORIGIN` existe para o
+# `docker-compose.dokploy.yml`, que a REPASSA (http://imobcrm-app:3000): lá o
+# app também está na rede compartilhada do Traefik, onde `app` pode ser o
+# contêiner de outro sistema, e cada serviço ganha um nome único. (A primeira
+# versão disto lia uma variável que nenhum compose repassava — controle
+# decorativo. Agora há quem a repasse, e o teste do compose do Dokploy cobra.)
+#
+# A origem entra no crontab entre aspas DUPLAS, que o `sh -c` do crond
+# reavalia: por isso só passa esquema + host + porta, sem `$`, crase ou aspas.
+APP_ORIGIN="${SCHEDULER_APP_ORIGIN:-http://app:3000}"
+if ! printf '%s' "$APP_ORIGIN" | grep -Eq '^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$'; then
+  echo "scheduler: SCHEDULER_APP_ORIGIN inválida ('$APP_ORIGIN') — use só esquema, host e porta (ex.: http://app:3000)." >&2
+  exit 1
+fi
 
 # O crond executa cada linha por `/bin/sh -c`, então o segredo é REAVALIADO pelo
 # shell na hora de disparar. Interpolá-lo cru dentro de aspas duplas fazia com
