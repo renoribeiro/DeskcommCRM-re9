@@ -20,6 +20,7 @@ import {
   type PontoDeEmbedding,
 } from "@/lib/ai/embeddings/chave";
 import { gatewayHeaders, type ModelId } from "@/lib/ai/gateway";
+import { fetchParaDestinoDaOrganizacao } from "@/lib/automation/destinos-internos-autorizados";
 
 export interface EmbedOptions {
   organizationId: string;
@@ -80,7 +81,12 @@ export async function embedText(
     ? modelId
     : createOpenAI({
         apiKey: chave.apiKey ?? "",
-        ...(chave.baseUrl ? { baseURL: chave.baseUrl } : {}),
+        // `baseUrl` vem do binding do painel — escolha de uma ORGANIZAÇÃO
+        // (auditoria P4, `docs/imobiliario/04-…`): o `fetch` do SDK passa
+        // pela régua de destino a cada chamada, e redirect não é seguido.
+        ...(chave.baseUrl
+          ? { baseURL: chave.baseUrl, fetch: fetchParaDestinoDaOrganizacao() }
+          : {}),
       }).textEmbeddingModel(modelId.replace(/^openai\//, ""));
 
   const result = await embed({

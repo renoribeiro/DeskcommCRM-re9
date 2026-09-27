@@ -528,6 +528,11 @@ async function decifrarChave(
   }
 }
 
+/** `fetch` com a régua de destino da organização, quando o endereço é dela. */
+function guardaDeDestino(baseUrl: string | null): { fetch?: typeof fetch } {
+  return baseUrl ? { fetch: fetchParaDestinoDaOrganizacao() } : {};
+}
+
 /**
  * Instancia o provider. Espelha `createDefaultRegistry` do agent-engine — e a
  * duplicação é consciente e temporária: unificar exige que estes workers falem
@@ -535,7 +540,7 @@ async function decifrarChave(
  * devolve `null` para o chamador cair no padrão com aviso, nunca um fallback
  * silencioso para outro provedor.
  */
-function instanciar(
+export function instanciar(
   provider: string,
   apiKey: string,
   modelId: string,
@@ -548,15 +553,32 @@ function instanciar(
       return createOpenAI({ apiKey })(modelId);
     case "google":
       return createGoogleGenerativeAI({ apiKey })(modelId);
+    // `base_url` do painel é escolha de uma ORGANIZAÇÃO (auditoria P4,
+    // `docs/imobiliario/04-…`): quando ele vem, o `fetch` do SDK passa pela
+    // régua de destino a CADA chamada, como no `custom` abaixo — senão a chave
+    // da organização ia para a rede interna da instalação. Sem `base_url`, o
+    // endpoint é a constante do fabricante e o `fetch` padrão basta.
     case "openrouter":
-      return createOpenAI({ apiKey, baseURL: baseUrl ?? OPENROUTER_BASE_URL }).chat(modelId); // ver providers.ts
+      return createOpenAI({
+        apiKey,
+        baseURL: baseUrl ?? OPENROUTER_BASE_URL,
+        ...guardaDeDestino(baseUrl),
+      }).chat(modelId); // ver providers.ts
     // A DeepSeek fala a API da OpenAI. Sem este caso, uma organização em
     // DeepSeek cairia no `default` (null) e a pilha antiga seguiria para o
     // padrão com aviso — a tela ofereceria um provedor que estes workers ignoram.
     case "deepseek":
-      return createOpenAI({ apiKey, baseURL: baseUrl ?? DEEPSEEK_ENDPOINT })(modelId);
+      return createOpenAI({
+        apiKey,
+        baseURL: baseUrl ?? DEEPSEEK_ENDPOINT,
+        ...guardaDeDestino(baseUrl),
+      })(modelId);
     case "requesty":
-      return createOpenAI({ apiKey, baseURL: baseUrl ?? REQUESTY_ENDPOINT }).chat(modelId); // ver providers.ts
+      return createOpenAI({
+        apiKey,
+        baseURL: baseUrl ?? REQUESTY_ENDPOINT,
+        ...guardaDeDestino(baseUrl),
+      }).chat(modelId); // ver providers.ts
     // Provedor personalizado (#1642): endpoint do operador. Sem `baseUrl` não
     // há onde ir — `null` deixa o chamador cair no padrão COM AVISO, que é o
     // contrato deste switch; inventar um endpoint seria mandar a chave do
