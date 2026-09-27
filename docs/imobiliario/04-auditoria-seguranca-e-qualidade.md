@@ -182,7 +182,7 @@ funcionava deixa de funcionar; a nota pública explica o caminho certo.
 
 | ID | Sev. | Achado | Ajuste |
 |---|---|---|---|
-| T1 | 🟡 | O gatilho da 5001 só conferia o UPDATE quando escopo ou nome mudavam: um admin pela REST trocava o `token_hash` de um token do agente ou de integração (tomando a identidade dele) ou reativava um token revogado; no INSERT, `created_by` podia ser de outro membro | Com ator humano, UPDATE só revoga (em nome de quem revoga; token revogado não volta) e INSERT exige `created_by = auth.uid()`. 5 casos novos no invariante |
+| T1 | 🟡 | O gatilho da 5001 só conferia o UPDATE quando escopo ou nome mudavam: um admin pela REST trocava o `token_hash` de um token do agente ou de integração (tomando a identidade dele) ou reativava um token revogado; no INSERT, `created_by` podia ser de outro membro | Com ator humano, UPDATE só revoga (em nome de quem revoga; `revoked_by` só muda junto com a revogação; token revogado não volta) e INSERT exige `created_by = auth.uid()`. 6 casos novos no invariante |
 | T2 | 🟡 | A chave derivada do `INTERNAL_SECRET` não protege contra quem vazou esse segredo: o rótulo é público. O comentário do código afirmava o contrário | `INVITE_TOKEN_SECRET` e `OAUTH_STATE_SECRET` dedicados (o segundo cobre Google Agenda, Google Ads e Nuvemshop), gerados pelo `gerar-env.sh`; comentários e notas públicas corrigidos |
 | T3 | 🔵 | `crm_list_conversations` filtrava o contato depois de paginar | O contato vai no SQL (`recorte` do handler), com teste que prova o filtro no banco |
 | T4 | 🔵 | A mídia do eco do celular (saída com `sent_via='external_device'`) ficou 404 até ser persistida | O proxy aceita também o eco, sempre pelo caminho de arquivo da sessão |

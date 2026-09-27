@@ -243,6 +243,11 @@ describe("R7/A4 — token gravado por pessoa só leva escopo concedível (5001)"
     expect(erro?.code, `esperava PT403, veio ${erro?.code}: ${erro?.message}`).toBe("PT403");
   });
 
+  it("⛔ UPDATE: revoked_by num token ativo, sem revogar, é recusado", async () => {
+    const erro = await atualizarComoAdmin(`update public.api_tokens set revoked_by = '${ADMIN}' where id = $ID`);
+    expect(erro?.code, `esperava PT403, veio ${erro?.code}: ${erro?.message}`).toBe("PT403");
+  });
+
   it("⛔ UPDATE: a revogação não é registrada em nome de outro membro", async () => {
     const erro = await atualizarComoAdmin(
       `update public.api_tokens set revoked_at = now(), revoked_by = '${GERENTE}' where id = $ID`,

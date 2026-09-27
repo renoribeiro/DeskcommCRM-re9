@@ -124,6 +124,11 @@ begin
       raise exception 'Token revogado não volta a valer.'
         using errcode = 'PT403';
     end if;
+    if old.revoked_at is null and new.revoked_at is null
+       and new.revoked_by is distinct from old.revoked_by then
+      raise exception 'Só uma revogação registra quem revogou.'
+        using errcode = 'PT403';
+    end if;
     if new.revoked_at is not null and new.revoked_by is distinct from auth.uid()
        and old.revoked_at is null then
       raise exception 'A revogação é registrada em nome de quem revoga.'
