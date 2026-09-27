@@ -24,6 +24,7 @@ import { catalogEntry, deModuloDesligado } from "@/lib/mcp/tools/catalog";
 import type { ModuloOpcional } from "@/lib/instalacao/modulos";
 import { higienizarUuidsDeAterro } from "@/lib/mcp/uuid-de-aterro";
 import { recusaDeCapacidadeParaOModelo } from "@/lib/mcp/recusa-para-o-modelo";
+import { aplicarEscopoDoContato, recortarResultadoDoContato } from "@/lib/mcp/escopo-do-contato";
 import type { McpContext, McpToolDefinition } from "@/lib/mcp/types";
 import { resolveActiveLeadForContact, type LeadCandidate } from "@/lib/leads/active-lead";
 import { podeChamarFerramenta, recusaParaOModelo } from "@/lib/leads/escopo-de-funil";
@@ -65,6 +66,11 @@ export interface PickToolsInput {
    * fechou um pedido e chamou `crm_update_lead` duas vezes com o id do contato
    * — as duas recusadas, e o pedido confirmado ficou sem valor. Com o contato
    * do turno à mão, esse id é traduzido para o negócio aberto dele.
+   *
+   * É também a FRONTEIRA do turno (A1): com ele definido e o ator sendo um
+   * agente de IA, toda ferramenta que recebe id de contato, negócio,
+   * compromisso, conversa, caso ou retorno só alcança os deste contato — ver
+   * `lib/mcp/escopo-do-contato.ts`.
    */
   contatoDoTurno?: string;
 }
@@ -158,9 +164,61 @@ function wrapMcpTool(
           campos: higiene.descartados.join(","),
         });
       }
+      // ── O TURNO SÓ ENXERGA O CLIENTE DO TURNO (A1) ─────────────────────────
+      //
+      // Aqui, na ponte, e não nos handlers: eles servem também a tela, a API e
+      // as automações, onde quem age é gente ou integração. Este ponto sabe que
+      // quem age é o AGENTE, atendendo UM contato. Cada ferramenta declara em
+      // `ESCOPO_POR_FERRAMENTA` que campo aponta para o quê; id de outro
+      // cliente é recusado com texto para o modelo, e listagem é recortada.
+      const escopoDoContato =
+        input.contatoDoTurno && input.auth.actor.type === "ai_agent"
+          ? {
+              contatoDoTurno: input.contatoDoTurno,
+              organizationId: input.ctx.organizationId,
+              supabase: input.supabase,
+            }
+          : null;
       try {
         ensureScope(input.auth.scopes, def.requiresScope);
         ensureRole(input.auth.role, def.requiresRole);
+
+        if (escopoDoContato) {
+          const vereditoDoContato = await aplicarEscopoDoContato({
+            ...escopoDoContato,
+            ferramenta: def.name,
+            argumentos: argsRecord,
+          });
+          if (!vereditoDoContato.permitido) {
+            void auditMcpToolCall({
+              ctx: input.ctx,
+              toolName: def.name,
+              args: argsAudit,
+              durationMs: Date.now() - startedAt,
+              success: false,
+              errorMessage: `escopo_do_contato:${vereditoDoContato.motivo}${
+                vereditoDoContato.campo ? `:${vereditoDoContato.campo}` : ""
+              }`,
+            });
+            logger.warn("ferramenta recusada fora do contato do turno", {
+              tool: def.name,
+              motivo: vereditoDoContato.motivo,
+              campo: vereditoDoContato.campo ?? null,
+              organization_id: input.ctx.organizationId,
+              request_id: input.ctx.requestId,
+            });
+            // Texto, não exceção — a mesma razão da recusa de funil abaixo.
+            return {
+              permitido: false,
+              motivo: vereditoDoContato.motivo,
+              mensagem: vereditoDoContato.mensagem,
+            };
+          }
+          // O contato do turno injetado onde a ferramenta o aceita sem exigir.
+          for (const [chave, valor] of Object.entries(vereditoDoContato.argumentos)) {
+            argsRecord[chave] = valor;
+          }
+        }
 
         // ── ESCOPO DE FUNIL (spec 17 passo 3) ────────────────────────────────
         //
@@ -236,7 +294,12 @@ function wrapMcpTool(
           return { permitido: false, motivo: veredito.motivo, mensagem: explicacao };
         }
 
-        const result = await def.handler(argsRecord as never, input.ctx);
+        const bruto = await def.handler(argsRecord as never, input.ctx);
+        // Listagem sem filtro de contato (busca de contatos, negócios, casos):
+        // o que volta ao modelo é só o do contato do turno.
+        const result = escopoDoContato
+          ? await recortarResultadoDoContato(def.name, bruto, escopoDoContato)
+          : bruto;
 
         // Capture handoff signal so the runtime can short-circuit the loop.
         if (def.name === HANDOFF_TOOL_NAME) {

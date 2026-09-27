@@ -4,8 +4,8 @@
  * ## O defeito que este teste encurta
  *
  * O caso de recusa de `tests/e2e/capacidades-do-agente.spec.ts` clica em
- * "Atender" e espera `/faltam? 1 vaga/`. A aritmética é o seed da spec (9,
- * todas FORA do pacote) somado às 17 do pacote: 26 contra o teto de 25. Quando
+ * "Atender" e espera `/faltam? 1 vaga/`. A aritmética é o seed da spec (hoje 10,
+ * todas FORA do pacote) somado às 16 do pacote: 26 contra o teto de 25. Quando
  * uma ferramenta nova entra em `atender` — a #1684 fez exatamente isso — a
  * recusa na tela vira "faltam 2 vagas" e quem repara é o e2e, uns 20 minutos
  * depois, longe da mudança que causou o problema.
@@ -93,7 +93,7 @@ describe("ligar Atender com o seed da spec excede o teto em exatamente uma vaga"
 
   it("nenhuma ferramenta do seed está DENTRO de Atender", () => {
     // Se uma entrasse, a união seria menor que a soma e a aritmética da spec
-    // (9 + 17) deixaria de descrever o que a tela faz ao clicar.
+    // (seed + pacote) deixaria de descrever o que a tela faz ao clicar.
     for (const ferramenta of SEED) {
       expect(
         EM_ATENDER.includes(ferramenta),

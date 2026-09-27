@@ -76,8 +76,9 @@ const TOOLS_DO_SEED = [
   // "faltam 1 vaga". Com teto 25 essas mesmas 21 passam, a recusa nunca acontece
   // e o caso vira um clique que sempre dá certo — verde sem medir nada.
   //
-  // Nove reproduzem a MESMA aritmética no teto novo: 9 + 17 = 26 > 25, recusa
+  // Nove reproduziam a MESMA aritmética no teto novo: 9 + 17 = 26 > 25, recusa
   // por 1 vaga; desligar uma deixa 8 + 17 = 25, que é o teto exato e passa.
+  // Hoje são dez contra um "Atender" de 16 — a conta é a mesma (ver a décima).
   //
   // Os 17 são o pacote "Atender" DEPOIS da #528, e foi ela que mudou o número:
   // a crítica que o pacote contava (o envio de WhatsApp, que o motor descarta
@@ -97,6 +98,11 @@ const TOOLS_DO_SEED = [
   // Existe para a aritmética continuar estourando depois da #528; sem ela o
   // cenário de recusa vira um clique que sempre dá certo.
   "crm_list_knowledge_sources",
+  // A DÉCIMA, pelo mesmo motivo da nona: a auditoria A1 tirou
+  // `crm_search_contacts` de "Atender" (num atendimento o agente só enxerga o
+  // cliente da conversa, e a busca só devolveria ele mesmo). O pacote caiu para
+  // 16, e 9 + 16 = 25 caberia — a recusa sumiria. Com esta, 10 + 16 = 26.
+  "crm_list_improvement_proposals",
 ];
 
 /**
