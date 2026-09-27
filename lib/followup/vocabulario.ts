@@ -553,6 +553,7 @@ export const SITUACOES_DO_ACOMPANHAMENTO: Record<EnrollmentStatus, string> = {
   // precisa saber que este acompanhamento está vivo e só não fala agora.
   dormente: "Aguardando a data do retorno",
   paused_handoff: "Pausado — um humano assumiu",
+  paused_manual: "Pausado por uma pessoa",
   coletando: "Coletando respostas do roteiro",
   completed: "Concluído",
   cancelled: "Cancelado",

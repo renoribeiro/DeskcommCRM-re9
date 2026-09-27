@@ -24,6 +24,12 @@ export type EnrollmentStatus =
   | "dormente"
   | "paused_handoff"
   /**
+   * Pausa feita por uma pessoa (migration 0145, `lib/followup/intervencao.ts`).
+   * Sem relógio e fora de `LIVE_STATUSES`: nem o inbound nem o handoff a mexem.
+   * Está aqui porque o opt-out a alcança (`reactivity.ts`).
+   */
+  | "paused_manual"
+  /**
    * Roteiro de atendimento em andamento (0394). Conduzido pelo TURNO, não pelo
    * relógio: o motor de follow-up nunca o reclama (o claim filtra
    * `active|waiting_reply`). Está aqui porque o opt-out o alcança

@@ -5425,27 +5425,51 @@ drop policy if exists "messages_insert" on public.messages;
 drop policy if exists "messages_update" on public.messages;
 drop policy if exists "messages_delete" on public.messages;
 
+-- As três policies abaixo são as da migration 0439 (achado B1): a linha é de
+-- uma organização do usuário E a conversa apontada é da MESMA organização da
+-- linha. Redefinidas AQUI, no lugar da versão antiga, e não no fim do arquivo:
+-- uma versão intermediária diferente da final seria reinstalada a cada update
+-- (`tests/unit/baseline-nao-constroi-o-que-derruba.test.ts`).
 create policy "messages_select" on public.messages
   for select using (
     public.fn_is_platform_admin()
-    or exists (
-      select 1 from public.conversations c
-      where c.id = messages.conversation_id
+    or (
+      organization_id in (select public.fn_user_org_ids())
+      and exists (
+        select 1 from public.conversations c
+         where c.id = messages.conversation_id
+           and c.organization_id = messages.organization_id
+      )
     )
   );
 
 create policy "messages_insert" on public.messages
   for insert with check (
-    (organization_id in (select public.fn_user_org_ids()))
-    or public.fn_is_platform_admin()
+    public.fn_is_platform_admin()
+    or (
+      organization_id in (select public.fn_user_org_ids())
+      and exists (
+        select 1 from public.conversations c
+         where c.id = messages.conversation_id
+           and c.organization_id = messages.organization_id
+      )
+    )
   );
+
 create policy "messages_update" on public.messages
   for update using (
-    (organization_id in (select public.fn_user_org_ids()))
-    or public.fn_is_platform_admin()
+    public.fn_is_platform_admin()
+    or (organization_id in (select public.fn_user_org_ids()))
   ) with check (
-    (organization_id in (select public.fn_user_org_ids()))
-    or public.fn_is_platform_admin()
+    public.fn_is_platform_admin()
+    or (
+      organization_id in (select public.fn_user_org_ids())
+      and exists (
+        select 1 from public.conversations c
+         where c.id = messages.conversation_id
+           and c.organization_id = messages.organization_id
+      )
+    )
   );
 create policy "messages_delete" on public.messages
   for delete using (
@@ -39236,6 +39260,71 @@ grant execute on function public.fn_metricas_links_rastreaveis(uuid) to service_
 
 notify pgrst, 'reload schema';
 
+-- ---- endurecimento: definer sem ator e teto de tokens sem o efêmero (migration 0439) ----
+-- Racional inteiro na migration 0439 (achados B2 e A5). Redefine função, então
+-- fica ANTES da varredura de anon. `fn_resolve_inbound_number` só o servidor
+-- chama; `fn_colegas_podem_mexer_na_agenda` só responde pela organização de
+-- quem chama; o efêmero `agent-run:` do turno do agente sai do teto da 0415.
+revoke execute on function public.fn_resolve_inbound_number(text) from public, anon, authenticated;
+grant  execute on function public.fn_resolve_inbound_number(text) to service_role;
+alter function public.fn_resolve_inbound_number(text) set search_path = public, pg_temp;
+
+create or replace function public.fn_colegas_podem_mexer_na_agenda(p_org uuid)
+returns boolean language sql stable security definer set search_path=public as $$
+ select case
+   when auth.uid() is not null
+    and not public.fn_is_platform_admin()
+    and not (p_org in (select public.fn_user_org_ids()))
+   then null
+   else coalesce(
+     (select (o.settings->'colegas_podem_mexer_na_agenda') is distinct from 'false'::jsonb
+        from public.organizations o where o.id = p_org),
+     true)
+ end;
+$$;
+revoke all on function public.fn_colegas_podem_mexer_na_agenda(uuid) from public, anon;
+grant execute on function public.fn_colegas_podem_mexer_na_agenda(uuid) to authenticated, service_role;
+
+create or replace function public.fn_teto_de_tokens_ativos() returns trigger
+    language plpgsql security definer
+    set search_path = ''
+as $$
+declare
+  v_teto   constant integer := 50;
+  v_ativos integer;
+begin
+  -- O efêmero do turno do agente (nome `agent-run:%`, validade de até 1 hora)
+  -- mintado sem JWT (service role) não disputa o teto dos humanos.
+  if auth.uid() is null
+     and new.name like 'agent-run:%'
+     and new.expires_at is not null
+     and new.expires_at <= coalesce(new.created_at, now()) + interval '1 hour' then
+    return new;
+  end if;
+
+  select count(*)
+    into v_ativos
+    from public.api_tokens
+   where organization_id = new.organization_id
+     and revoked_at is null
+     and (expires_at is null or expires_at > now())
+     and not (name like 'agent-run:%'
+              and expires_at is not null
+              and expires_at <= created_at + interval '1 hour');
+
+  if v_ativos >= v_teto then
+    raise exception
+      'Teto de tokens ativos por organização atingido: % de %. Revogue um token que não esteja mais em uso (Configurações → Tokens de API → Revogar) para liberar espaço — tokens revogados ou expirados não contam — e tente criar outro.',
+      v_ativos, v_teto
+      using errcode = 'PT409';
+  end if;
+
+  return new;
+end;
+$$;
+revoke execute on function public.fn_teto_de_tokens_ativos() from public, anon, authenticated;
+
+
 -- ---- VARREDURA anon: função nova nasce exposta em quem ATUALIZA (migration 0116) ----
 --
 -- ⚠️ DE PROPÓSITO, NENHUMA FUNÇÃO É CRIADA DEPOIS DESTE BLOCO. Apêndice que cria
@@ -40316,3 +40405,67 @@ alter table public.crm_stages
 alter table public.crm_stages
   add constraint crm_stages_win_probability_range
   check (win_probability is null or win_probability between 0 and 100);
+
+-- ---- endurecimento: mensagem presa à conversa, TRUNCATE e índices (migration 0439) ----
+-- Racional inteiro na migration 0439 (achados B1, B3, B5, B6). Sem função
+-- criada. Fica no FIM do arquivo de propósito: o `revoke truncate` tem de vir
+-- depois de toda tabela do apêndice, porque o `ALTER DEFAULT PRIVILEGES ...
+-- GRANT ALL ON TABLES` do corpo do dump é reaplicado a cada `update.sh` e
+-- concede TRUNCATE a toda tabela criada depois dele.
+-- B1: as policies de `messages` foram redefinidas no lugar da versão antiga
+-- (procure `messages_select` acima), e não aqui.
+
+-- B3
+revoke truncate on all tables in schema public from public, anon, authenticated;
+alter default privileges for role postgres in schema public revoke truncate on tables from public, anon, authenticated;
+
+-- B5
+create index if not exists idx_messages_activity_id
+  on public.messages (activity_id) where activity_id is not null;
+create index if not exists idx_messages_demanda_id
+  on public.messages (demanda_id) where demanda_id is not null;
+create index if not exists idx_messages_sent_by_user_id
+  on public.messages (sent_by_user_id) where sent_by_user_id is not null;
+create index if not exists idx_crm_lead_activities_lead_id
+  on public.crm_lead_activities (lead_id);
+create index if not exists idx_contacts_is_merged_into
+  on public.contacts (is_merged_into) where is_merged_into is not null;
+create index if not exists idx_crm_leads_stage_id
+  on public.crm_leads (stage_id);
+create index if not exists idx_crm_leads_pipeline_id
+  on public.crm_leads (pipeline_id);
+create index if not exists idx_crm_leads_contact_id
+  on public.crm_leads (contact_id) where contact_id is not null;
+create index if not exists idx_conversations_contact_id
+  on public.conversations (contact_id);
+create index if not exists idx_conversations_channel_session_id
+  on public.conversations (channel_session_id);
+create index if not exists idx_audit_actor_api_token
+  on public.api_audit_log (actor_api_token_id) where actor_api_token_id is not null;
+-- As demais FKs de uma coluna das mesmas tabelas que a varredura
+-- (`tests/invariants/indices-das-chaves-estrangeiras.test.ts`) achou sem índice.
+-- Todas aceitam nulo e são nulas na maioria das linhas: o parcial é pequeno.
+create index if not exists idx_conversations_active_ai_agent_id
+  on public.conversations (active_ai_agent_id) where active_ai_agent_id is not null;
+create index if not exists idx_conversations_current_demanda_id
+  on public.conversations (current_demanda_id) where current_demanda_id is not null;
+create index if not exists idx_conversations_snoozed_by_user_id
+  on public.conversations (snoozed_by_user_id) where snoozed_by_user_id is not null;
+create index if not exists idx_conversations_usable_for_rag_marked_by
+  on public.conversations (usable_for_rag_marked_by) where usable_for_rag_marked_by is not null;
+create index if not exists idx_crm_leads_lost_from_stage_id
+  on public.crm_leads (lost_from_stage_id) where lost_from_stage_id is not null;
+create index if not exists idx_crm_leads_owner_agent_id
+  on public.crm_leads (owner_agent_id) where owner_agent_id is not null;
+
+-- B6
+create index if not exists idx_conversation_notes_org_conversation
+  on public.conversation_notes (organization_id, conversation_id, created_at);
+create index if not exists idx_cae_org_conversation
+  on public.conversation_assignment_events (organization_id, conversation_id, created_at desc);
+create index if not exists idx_followup_events_org_enrollment
+  on public.followup_enrollment_events (organization_id, enrollment_id, created_at);
+create index if not exists idx_agent_case_events_org_case
+  on public.agent_case_events (organization_id, case_id, created_at);
+
+notify pgrst, 'reload schema';

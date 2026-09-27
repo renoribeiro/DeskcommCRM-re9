@@ -81,8 +81,20 @@ export const LIVE_STATUSES: readonly EnrollmentStatus[] = ["active", "waiting_re
  * STOP e LGPD são hard stop: não admitem exceção de status, e uma espera de 28
  * dias que sobrevivesse ao "pare de me mandar mensagem" voltaria a falar com
  * quem pediu silêncio — um mês depois, quando ninguém mais lembra por quê.
+ *
+ * `paused_manual` também (migration 0145): a pausa de quem opera não é
+ * terminal, e o enrollment pausado que sobrevivesse ao STOP ocuparia a vaga
+ * única do contato (`idx_followup_enrollments_one_live`) sem nunca virar
+ * `opted_out`. Ele entra AQUI e não em `LIVE_STATUSES` de propósito: aquela
+ * lista decide também quem o handoff pausa e quem o fim do handoff retoma, e
+ * uma pausa manual convertida em `paused_handoff` seria retomada pela máquina.
  */
-const STATUS_ALCANCADOS_PELO_OPT_OUT: readonly EnrollmentStatus[] = [...LIVE_STATUSES, "dormente", "coletando"];
+const STATUS_ALCANCADOS_PELO_OPT_OUT: readonly EnrollmentStatus[] = [
+  ...LIVE_STATUSES,
+  "paused_manual",
+  "dormente",
+  "coletando",
+];
 
 export interface LiveEnrollmentRef {
   id: string;
