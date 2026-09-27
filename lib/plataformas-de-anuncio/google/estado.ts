@@ -17,6 +17,7 @@
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { chaveDoEstadoOAuth } from "@/lib/auth/chave-do-estado-oauth";
 
 import type { ApiDeConversaoGoogle } from "../types";
 
@@ -33,7 +34,9 @@ export interface EstadoDaConexaoDeAds {
 }
 
 function assinar(carga: string, segredo: string): Buffer {
-  return createHmac("sha256", segredo).update(carga, "utf8").digest();
+  // Chave derivada, nunca o segredo cru (auditoria P7): o `INTERNAL_SECRET`
+  // também é bearer de cron. Ver `lib/auth/chave-do-estado-oauth.ts`.
+  return createHmac("sha256", chaveDoEstadoOAuth(segredo)).update(carga, "utf8").digest();
 }
 
 function conferirSegredo(segredo: string): string {
