@@ -453,6 +453,13 @@ export async function podarHistorico(
 // para sempre, como a auditoria que o cita; ele não pesa na tela (a listagem o
 // exclui) nem no teto de tokens ativos (está vencido).
 //
+// Para que "citado" seja exceção, e não todo token: a auditoria das tools
+// chamadas pelo agente grava o efêmero só em `metadata.actor_api_token_id`,
+// nunca na coluna com FK (`tokenNaAuditoria`, `lib/mcp/audit.ts`). Enquanto
+// gravava na coluna, todo turno citava o seu token e esta poda não apagava
+// nenhum. Rascunho criado pelo agente (`crm_create_conversation_draft`) ainda
+// cita o token e o mantém — é raro, e a autoria do rascunho é o dado.
+//
 // Custo: o anti-join consulta `api_audit_log` por `actor_api_token_id` — é o
 // índice dessa FK (B5 da auditoria de 2026-09) que o torna barato. O lote é
 // curto e o número de lotes, pequeno, para a rodada nunca segurar o cron.

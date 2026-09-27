@@ -505,6 +505,9 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       role: "ai_operator",
       actor: auth.actor,
       apiTokenId: ephemeral.id,
+      // Token cunhado aqui para este turno: a auditoria o guarda só no
+      // metadata, e a poda de efêmeros consegue apagá-lo (ver `McpContext`).
+      tokenEfemero: true,
       requestId: run.id,
       supabase: admin,
     };

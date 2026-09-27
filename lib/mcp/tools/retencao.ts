@@ -52,19 +52,28 @@ import { encerraDemanda } from "@/lib/leads/encerramento";
 import { carregaRadarDeRisco } from "@/lib/leads/radar-de-risco";
 import { propoeReativacao } from "@/lib/leads/reactivation";
 import { resolveStageWindow } from "@/lib/leads/risk-radar";
+import { tokenNaAuditoria } from "../audit";
 import type { McpContext, McpToolDefinition } from "../types";
 
 /** Payload de auditoria a partir do ator do ctx (user humano ou agente). */
 function actorAudit(ctx: McpContext): {
   actorUserId: string | null;
+  /** Token de quem chamou — nulo quando é o efêmero do agente (ver `tokenNaAuditoria`). */
+  actorApiTokenId: string | null;
   metadataActor: Record<string, unknown>;
 } {
+  const token = tokenNaAuditoria(ctx);
   if (ctx.actor.type === "user") {
-    return { actorUserId: ctx.actor.id, metadataActor: { actor_type: "user" } };
+    return {
+      actorUserId: ctx.actor.id,
+      actorApiTokenId: token.actorApiTokenId,
+      metadataActor: { actor_type: "user", ...token.metadata },
+    };
   }
   return {
     actorUserId: null,
-    metadataActor: { actor_type: ctx.actor.type, actor_id: ctx.actor.id },
+    actorApiTokenId: token.actorApiTokenId,
+    metadataActor: { actor_type: ctx.actor.type, actor_id: ctx.actor.id, ...token.metadata },
   };
 }
 
@@ -220,7 +229,7 @@ export const crmScheduleFollowup: McpToolDefinition<typeof agendarShape> = {
     await audit({
       action: "followup.scheduled",
       actorUserId: a.actorUserId,
-      actorApiTokenId: ctx.apiTokenId,
+      actorApiTokenId: a.actorApiTokenId,
       organizationId: ctx.organizationId,
       resourceType: "cron_job",
       resourceId: resultado.retorno.id,
@@ -295,7 +304,7 @@ export const crmCancelFollowup: McpToolDefinition<typeof cancelarShape> = {
     await audit({
       action: "followup.cancelled",
       actorUserId: a.actorUserId,
-      actorApiTokenId: ctx.apiTokenId,
+      actorApiTokenId: a.actorApiTokenId,
       organizationId: ctx.organizationId,
       resourceType: "cron_job",
       resourceId: resultado.retorno.id,
@@ -546,7 +555,7 @@ export const crmProposeReactivation: McpToolDefinition<typeof reativacaoShape> =
     await audit({
       action: "lead.reactivation_proposed",
       actorUserId: a.actorUserId,
-      actorApiTokenId: ctx.apiTokenId,
+      actorApiTokenId: a.actorApiTokenId,
       organizationId: ctx.organizationId,
       resourceType: "crm_lead",
       resourceId: input.lead_id,
@@ -632,7 +641,7 @@ export const crmEnrollFollowupFlow: McpToolDefinition<typeof inscreverShape> = {
     await audit({
       action: "followup_enrollment.created",
       actorUserId: a.actorUserId,
-      actorApiTokenId: ctx.apiTokenId,
+      actorApiTokenId: a.actorApiTokenId,
       organizationId: ctx.organizationId,
       resourceType: "followup_enrollment",
       resourceId: enrollmentId,

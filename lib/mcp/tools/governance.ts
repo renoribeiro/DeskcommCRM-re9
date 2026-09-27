@@ -16,21 +16,30 @@ import { audit } from "@/lib/audit";
 import { normalizarTags } from "@/lib/contacts/tag-normalizada";
 import { conversationTagSchema, conversationTagsSchema } from "@/lib/schemas/messaging";
 import { getQueueStatus } from "@/lib/routing/queue";
+import { tokenNaAuditoria } from "../audit";
 import type { McpContext } from "../types";
 import type { McpToolDefinition } from "../types";
 
 /** Payload de auditoria a partir do ator do ctx (user humano ou ai_agent). */
 function actorAudit(ctx: McpContext): {
   actorUserId: string | null;
+  /** Token de quem chamou — nulo quando é o efêmero do agente (ver `tokenNaAuditoria`). */
+  actorApiTokenId: string | null;
   metadataActor: Record<string, unknown>;
 } {
+  const token = tokenNaAuditoria(ctx);
   const actor = ctx.actor;
   if (actor.type === "user") {
-    return { actorUserId: actor.id, metadataActor: { actor_type: "user" } };
+    return {
+      actorUserId: actor.id,
+      actorApiTokenId: token.actorApiTokenId,
+      metadataActor: { actor_type: "user", ...token.metadata },
+    };
   }
   return {
     actorUserId: null,
-    metadataActor: { actor_type: actor.type, actor_id: actor.id },
+    actorApiTokenId: token.actorApiTokenId,
+    metadataActor: { actor_type: actor.type, actor_id: actor.id, ...token.metadata },
   };
 }
 
@@ -131,7 +140,7 @@ export const crmAssignConversation: McpToolDefinition<typeof assignInputShape> =
     await audit({
       action: parsed.reason === "release" ? "conversation.released" : "conversation.transferred",
       actorUserId: a.actorUserId,
-      actorApiTokenId: ctx.apiTokenId,
+      actorApiTokenId: a.actorApiTokenId,
       organizationId: ctx.organizationId,
       resourceType: "conversation",
       resourceId: parsed.conversation_id,
@@ -219,7 +228,7 @@ export const crmManageTags: McpToolDefinition<typeof tagsInputShape> = {
     await audit({
       action: TAG_AUDIT_ACTION[input.target_kind],
       actorUserId: a.actorUserId,
-      actorApiTokenId: ctx.apiTokenId,
+      actorApiTokenId: a.actorApiTokenId,
       organizationId: ctx.organizationId,
       resourceType: input.target_kind,
       resourceId: input.target_id,

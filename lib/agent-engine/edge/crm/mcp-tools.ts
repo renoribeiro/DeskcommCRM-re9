@@ -110,6 +110,9 @@ export async function buildMcpTurnTools(
       api_token_id: ephemeral.id,
     },
     apiTokenId: ephemeral.id,
+    // Token cunhado aqui para este turno: a auditoria o guarda só no metadata,
+    // e a poda de efêmeros consegue apagá-lo (ver `McpContext`).
+    tokenEfemero: true,
     requestId: ids.jobId,
     supabase: cfg.supabase,
   };

@@ -35,18 +35,30 @@ import { carregarRosterDeAtendimento, podeAssumirAgora } from "@/lib/escalacao/a
 import { lerChamado, listarChamados } from "@/lib/escalacao/chamados";
 import { lerContinuidadeHumana } from "@/lib/escalacao/continuidade";
 import { devolverAtendimentoAoAgente } from "@/lib/escalacao/retomada";
+import { tokenNaAuditoria } from "../audit";
 import type { McpContext, McpToolDefinition } from "../types";
 
 /** Payload de auditoria a partir do ator do ctx (mesma forma de governance.ts). */
 function actorAudit(ctx: McpContext): {
   actorUserId: string | null;
+  /** Token de quem chamou — nulo quando é o efêmero do agente (ver `tokenNaAuditoria`). */
+  actorApiTokenId: string | null;
   metadataActor: Record<string, unknown>;
 } {
+  const token = tokenNaAuditoria(ctx);
   const actor = ctx.actor;
   if (actor.type === "user") {
-    return { actorUserId: actor.id, metadataActor: { actor_type: "user" } };
+    return {
+      actorUserId: actor.id,
+      actorApiTokenId: token.actorApiTokenId,
+      metadataActor: { actor_type: "user", ...token.metadata },
+    };
   }
-  return { actorUserId: null, metadataActor: { actor_type: actor.type, actor_id: actor.id } };
+  return {
+    actorUserId: null,
+    actorApiTokenId: token.actorApiTokenId,
+    metadataActor: { actor_type: actor.type, actor_id: actor.id, ...token.metadata },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +234,7 @@ export const crmAddCaseNote: McpToolDefinition<typeof notaInputShape> = {
     await audit({
       action: "ai.case_noted_by_agent",
       actorUserId: a.actorUserId,
-      actorApiTokenId: ctx.apiTokenId,
+      actorApiTokenId: a.actorApiTokenId,
       organizationId: ctx.organizationId,
       resourceType: "agent_case",
       resourceId: input.case_id,
@@ -272,7 +284,7 @@ export const crmCloseHumanCase: McpToolDefinition<typeof encerrarInputShape> = {
     await audit({
       action: "ai.case_closed_by_agent",
       actorUserId: a.actorUserId,
-      actorApiTokenId: ctx.apiTokenId,
+      actorApiTokenId: a.actorApiTokenId,
       organizationId: ctx.organizationId,
       resourceType: "agent_case",
       resourceId: input.case_id,
@@ -337,7 +349,8 @@ export const crmResumeAiAttendance: McpToolDefinition<typeof retomarInputShape> 
         organizationId: ctx.organizationId,
         actor: ctx.actor,
         requestId: ctx.requestId,
-        apiTokenId: ctx.apiTokenId,
+        // Efêmero do agente não entra na coluna com FK (ver `tokenNaAuditoria`).
+        apiTokenId: tokenNaAuditoria(ctx).actorApiTokenId,
       },
       { conversationId: input.conversation_id },
     );
