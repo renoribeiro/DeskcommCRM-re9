@@ -35,6 +35,9 @@ Instala na mesma VPS:
   - app, worker, scheduler, WAHA, Redis/SRH e Caddy;
   - HTTPS e roteamento por um unico dominio.
 
+Se a VPS ja tem um Traefik nas portas 80/443 (Dokploy, Coolify, Hostinger…),
+o CRM e as APIs do Supabase saem por ele, e o Caddy nao sobe.
+
 Sem --domain, pergunta somente o dominio. Administrador, senha e todos os
 segredos sao gerados automaticamente. A IA nasce desativada e pode ser
 configurada depois pela interface.
@@ -159,7 +162,13 @@ fi
 app_env="$ROOT_DIR/.env"
 set_env_var "$app_env" DOMAIN "$domain"
 set_env_var "$app_env" ACME_EMAIL "admin@${domain}"
-set_env_var "$app_env" REVERSE_PROXY caddy
+# Proxy: quem ja decidiu (reinstalacao, ou REVERSE_PROXY no ambiente) manda.
+# Sem decisao, a chave fica AUSENTE e o install.sh detecta: portas 80/443 livres
+# -> Caddy proprio (o comportamento de sempre); ocupadas por um Traefik (Dokploy,
+# Coolify, Hostinger) -> publica por ele, e o Supabase acompanha logo abaixo.
+if [[ -n "${REVERSE_PROXY:-}" ]]; then
+  set_env_var "$app_env" REVERSE_PROXY "$REVERSE_PROXY"
+fi
 set_env_var "$app_env" SINGLE_SERVER 1
 set_env_var "$app_env" SINGLE_SERVER_NETWORK "$SINGLE_SERVER_NETWORK"
 set_env_var "$app_env" PSQL_DOCKER_NETWORK "$SINGLE_SERVER_NETWORK"
@@ -172,7 +181,11 @@ set_env_var "$app_env" SUPABASE_DB_URL "postgresql://postgres:${postgres_passwor
 # publicada das TRES imagens e grava numero de versao (nunca tag movel).
 set_env_var "$app_env" OWNER_EMAIL "$owner_email"
 set_env_var "$app_env" OWNER_PASSWORD "$owner_password"
-set_env_var "$app_env" APP_NAME DeskcommCRM
+# Nome da marca: semente do .env (a marca de verdade mora no banco). Quem
+# instala para outra marca passa APP_NAME no ambiente; reinstalar mantem o que ja
+# estava gravado.
+app_name_atual="$(ler_env "$app_env" APP_NAME)"
+set_env_var "$app_env" APP_NAME "${APP_NAME:-${app_name_atual:-DeskcommCRM}}"
 set_env_var "$app_env" APP_LOCALE pt-BR
 # IA: nenhuma chave e gravada, entao ela nasce sem credencial (desligada) e o
 # fim do install.sh aponta o caminho em IA > Credenciais. Chaves NAO sao
@@ -196,6 +209,17 @@ fi
 # E-mail de acesso (esqueci a senha, confirmar cadastro): o GoTrue passa a usar
 # o SMTP do CRM. Sem SMTP no CRM, o aviso fica no fim, onde o dono o lê.
 load_env "$app_env"
+
+# Atras do Traefik da hospedagem, as APIs publicas do Supabase (/auth/v1,
+# /rest/v1…) precisam sair pelo mesmo Traefik que o install.sh acabou de
+# configurar para o app — senao o login no navegador recebe 404. Com Caddy isto
+# so confirma o COMPOSE_FILE de sempre.
+aplicar_proxy_do_supabase_single_server || die "Nao consegui configurar a publicacao do Supabase no proxy."
+if [[ "${REVERSE_PROXY:-caddy}" == "traefik" ]]; then
+  step "Publicando as APIs do Supabase pelo Traefik da VPS"
+  dc_supabase up -d --wait
+fi
+
 if sincronizar_smtp_do_gotrue; then
   dc_supabase up -d --no-deps auth
   aviso_email="O e-mail de acesso (senha, cadastro) sai pelo SMTP configurado no CRM."

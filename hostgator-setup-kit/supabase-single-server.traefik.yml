@@ -1,0 +1,42 @@
+# Acrescentado ao Compose do Supabase self-hosted SÓ quando a instalação
+# single-server sai por um Traefik que já existe na VPS (Dokploy, Coolify,
+# Hostinger, EasyPanel…). Quem decide é `aplicar_proxy_do_supabase_single_server`
+# (_common.sh), a partir do REVERSE_PROXY que o install.sh detectou.
+#
+# POR QUE EXISTE
+# --------------
+# No modo single-server com Caddy, UM domínio serve duas superfícies: as APIs
+# públicas do Supabase (/auth/v1, /rest/v1, /realtime/v1, /storage/v1,
+# /functions/v1, /graphql/v1) vão para o Envoy privado, e todo o resto vai para
+# o app (Caddyfile.single-server). Com o Traefik da hospedagem no lugar do Caddy,
+# o `docker-compose.traefik.yml` publica só o app — e o navegador, que chama o
+# Supabase no MESMO domínio, recebia do app um 404 em todo login.
+#
+# Este arquivo reproduz no Traefik o `@supabase path` do Caddyfile.single-server:
+# o gateway do Supabase entra na rede do proxy e ganha um router com prioridade
+# acima do router do app. Nada mais do Supabase entra nessa rede — Postgres,
+# Studio e as demais peças continuam só na rede privada.
+#
+# Os valores vêm do .env do Supabase (o `dc_supabase` roda com `env -i`), onde a
+# função acima os grava a partir do .env do CRM.
+
+services:
+  api-gw:
+    networks:
+      deskcomm_proxy: {}
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "${TRAEFIK_NETWORK:-traefik}"
+      traefik.http.routers.deskcomm-supabase.rule: "Host(`${PROXY_DOMAIN}`) && (PathPrefix(`/auth/v1`) || PathPrefix(`/rest/v1`) || PathPrefix(`/realtime/v1`) || PathPrefix(`/storage/v1`) || PathPrefix(`/functions/v1`) || PathPrefix(`/graphql/v1`))"
+      traefik.http.routers.deskcomm-supabase.entrypoints: "${TRAEFIK_ENTRYPOINT:-websecure}"
+      traefik.http.routers.deskcomm-supabase.tls.certresolver: "${TRAEFIK_CERTRESOLVER:-letsencrypt}"
+      # Acima do router `deskcomm` do app (que casa o Host inteiro) e abaixo de
+      # nada que importe: o bloqueio do webhook global do WAHA é outro caminho.
+      traefik.http.routers.deskcomm-supabase.priority: "900"
+      traefik.http.routers.deskcomm-supabase.service: "deskcomm-supabase"
+      traefik.http.services.deskcomm-supabase.loadbalancer.server.port: "8000"
+
+networks:
+  deskcomm_proxy:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik}

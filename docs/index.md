@@ -55,6 +55,7 @@ de menor precedência e registre.
 | [`presentation/pitch-deck.md`](presentation/pitch-deck.md) | Pitch |
 | [`imobiliario/01-auditoria.md`](imobiliario/01-auditoria.md) | Auditoria do código para o vertical imobiliário (retrato de `38dd469`) |
 | [`imobiliario/02-plano-vertical-imobiliario.md`](imobiliario/02-plano-vertical-imobiliario.md) | **Plano do ImobCRM** (vertical imobiliário de venda, SaaS) — decisões do dono, arquitetura, modelo de domínio, IA, épicos, compliance, roadmap |
+| [`imobiliario/03-instalacao-vps-dokploy.md`](imobiliario/03-instalacao-vps-dokploy.md) | Instalar o ImobCRM numa VPS com Dokploy e o Supabase na própria VPS |
 
 ## 3. Contrato técnico (specs)
 

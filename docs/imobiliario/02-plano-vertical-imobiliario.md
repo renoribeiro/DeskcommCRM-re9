@@ -1,7 +1,7 @@
 ---
 type: plan
 project: ImobCRM (fork re9 do DeskcommCRM — vertical imobiliário de VENDA)
-status: aprovado em direção — decisões do dono registradas na §0 (27/09/2026, duas rodadas)
+status: aprovado — decisões do dono registradas na §0 (27/09/2026, três rodadas); fase 0 em andamento
 last_updated: 2026-09-27
 base: auditoria em 01-auditoria.md (HEAD 38dd469)
 ---
@@ -34,6 +34,10 @@ base: auditoria em 01-auditoria.md (HEAD 38dd469)
 | 11 (C) | **Lançamentos entram na primeira fase** | O épico E12 (empreendimento, torres, unidades, espelho de vendas, tabela de preços, reserva) sobe para a fase 1, junto com o cadastro de imóveis, porque unidade **é** imóvel e as duas coisas compartilham o modelo. Os funis passam a ser três: Venda, Lançamento e Captação |
 | 12 (D) | **Uso inicial: só a RE9 Imob, numa VPS, em `crmimob.re9imob.com.br`** | A fase 1 é uma **instalação self-host de uma organização**, usando o kit que já existe (`hostgator-setup-kit/`) com as imagens do fork. A camada comercial SaaS (E19) continua no plano, mas só depois que a RE9 Imob validar o produto. Nenhuma decisão desta fase pode impedir o multi-imobiliária depois |
 | 13 (E) | **Banco Inter** | A cobrança da assinatura SaaS (E19) usa a **API Pix/boleto do Inter** (OAuth + certificado mTLS da conta PJ, webhook de pagamento). Não é necessária na fase 1 |
+| 14 (F) | **Supabase dentro da própria VPS** (Hostinger, com Dokploy) | Instalação pelo modo single-server do kit, que na fase 0 passou a funcionar **atrás do Traefik do Dokploy** (antes só subia com o Caddy próprio, que brigaria pelas portas 80/443). Passo a passo em [`03-instalacao-vps-dokploy.md`](03-instalacao-vps-dokploy.md) |
+| 15 (G) | **VPS de 4 vCPU e 8 GB** | Cabe (estimativa de 5 a 6 GB em uso), com swap de 4 GB de reserva. Evolution API e DocuSeal, quando entrarem, somam cerca de 0,8 GB: reavaliar a memória na fase 2 |
+| 16 (H) | **Conta Meta verificada** | O canal oficial pode ser conectado já na fase 1 |
+| 17 (I) | **Os portais incluem integração, mas não serão ligados agora** | O E7 continua na fase 2, sem pressa. Pedir a documentação técnica aos dois portais antes de começar |
 
 ---
 
@@ -146,7 +150,7 @@ por PR, o que diminui a divergência:
 | Tema | Decisão |
 |---|---|
 | **Tenancy** | Uma instalação e N imobiliárias, cada uma uma `organization`. O RLS com teste de isolamento já existe e continua obrigatório |
-| **Hospedagem** | **Agora (fase 1–2):** a VPS da RE9 em `crmimob.re9imob.com.br`, instalada pelo kit (`install.sh`) com as imagens do fork, `app` + `worker` + `scheduler` atrás do proxy, Supabase gerenciado. **Depois (SaaS):** mesma arquitetura com mais capacidade, staging idêntico com dados sintéticos e Supabase Pro (backups diários, sem pausa) |
+| **Hospedagem** | **Agora (fase 1–2):** a VPS da RE9 em `crmimob.re9imob.com.br`, instalada pelo kit (`install-single-server.sh`) com as imagens do fork: Supabase **na própria VPS** e `app` + `worker` + `scheduler`, tudo atrás do Traefik do Dokploy (decisão F). **Depois (SaaS):** mesma arquitetura com mais capacidade, staging idêntico com dados sintéticos e Supabase Pro (backups diários, sem pausa) |
 | **Domínios** | `app.<dominio-imobcrm>` para o CRM. Vitrine em `<imobiliaria>.<dominio-imobcrm>` ou **domínio próprio do cliente**, com TLS automático pelo **on-demand TLS do Caddy** (gratuito, Let's Encrypt), liberado por um endpoint `ask` que confere o domínio na tabela |
 | **Cadastro** | Cadastro público com teste grátis (14 dias), sobre o fluxo que já existe (`registration_requests`, `lib/auth/registration-requests.ts`), sem aprovação manual quando o plano for self-service. O onboarding aplica o **kit imobiliário** (E1) |
 | **Planos e limites** | Tabela `saas_plans` com limites (corretores, imóveis ativos, números de WhatsApp, GB de fotos, portais; a IA não entra no plano porque a chave é de cada imobiliária) e `saas_subscriptions` por organização. Os limites são aplicados no servidor, e o bloqueio por inadimplência usa a tela `app/account-suspended` (já existe) |
@@ -724,14 +728,7 @@ Além dos 18 itens do `CLAUDE.md`, todo épico cumpre estes critérios:
 
 ## 11. Decisões ainda em aberto
 
-As decisões A a E foram tomadas (§0, itens 9 a 13). Restam pontos operacionais, sem impacto na fase 0:
-
-| # | Pergunta | Recomendação |
-|---|---|---|
-| F | **Supabase:** nuvem (supabase.com) ou dentro da própria VPS (`supabase-single-server`)? | **Nuvem, no começo.** Menos manutenção e backup incluso; o plano gratuito pausa por inatividade, então usar o Pro assim que a RE9 Imob operar de verdade |
-| G | **Tamanho da VPS** | 4 vCPU e 8 GB de RAM para app + worker + scheduler + Redis + Evolution/WAHA + DocuSeal. Conferir o que já existe |
-| H | **Conta Meta** da RE9 Imob verificada (Business Manager + número na API oficial)? | Iniciar a verificação já, porque ela leva dias e trava o canal oficial |
-| I | **Planos do Grupo OLX e do Imovelweb** da RE9 Imob já incluem integração (feed XML e entrega de leads)? | Pedir ao atendimento de cada portal a documentação e as credenciais de integração |
+Todas as decisões da primeira e da segunda rodada foram tomadas (§0, itens 1 a 17). Nada bloqueia a fase 0.
 
 ---
 

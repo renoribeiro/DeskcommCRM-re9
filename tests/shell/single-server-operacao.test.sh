@@ -390,6 +390,78 @@ rm -f "$FLAGS/compose-falha"
 check "Supabase que não sobe: reprova sem mexer no modo de cadastro" \
   bash -c '[ "$1" -ne 0 ] && grep -qx "DISABLE_SIGNUP=false" "$2"' _ "$rc" "$SB/.env"
 
+# ════════════════════════════════════════════════════════════════════════════
+echo "(e) atrás do Traefik da hospedagem (Dokploy, Coolify, Hostinger):"
+# O Caddy não pode subir: o Traefik da hospedagem já está nas portas 80/443. O
+# app sai pelas labels do docker-compose.traefik.yml e as APIs do Supabase pelas
+# do supabase-single-server.traefik.yml — o login no navegador depende das duas.
+check "dc_files single-server + traefik soma os dois overrides" \
+  igual "$(SINGLE_SERVER=1 REVERSE_PROXY=traefik kit 'dc_files')" \
+  '-f docker-compose.prod.yml -f docker-compose.single-server.yml -f docker-compose.traefik.yml'
+check "dc_files single-server com Caddy segue como antes" \
+  igual "$(SINGLE_SERVER=1 REVERSE_PROXY=caddy kit 'dc_files')" \
+  '-f docker-compose.prod.yml -f docker-compose.single-server.yml'
+
+env_sb_inicial; printf 'ref=%s\n' "$pinada" > "$SB/.supabase-version"; : > "$LOG"
+REVERSE_PROXY=traefik TRAEFIK_NETWORK=dokploy-network TRAEFIK_ENTRYPOINT=websecure \
+  TRAEFIK_CERTRESOLVER=letsencrypt atualiza >/dev/null; rc=$?
+check "atualizar atrás do Traefik termina bem" test "$rc" -eq 0
+check "o override do Traefik chega ao Supabase" \
+  cmp -s "$KIT_DIR/supabase-single-server.traefik.yml" "$SB/docker-compose.deskcomm-traefik.yml"
+check "e entra no COMPOSE_FILE do Supabase" \
+  grep -qx 'COMPOSE_FILE=docker-compose.yml:docker-compose.deskcomm.yml:docker-compose.deskcomm-traefik.yml' "$SB/.env"
+check "a rede do Traefik do CRM é a mesma do Supabase" grep -qx 'TRAEFIK_NETWORK="dokploy-network"' "$SB/.env"
+check "o certresolver também" grep -qx 'TRAEFIK_CERTRESOLVER="letsencrypt"' "$SB/.env"
+
+: > "$LOG"
+atualiza >/dev/null; rc=$?
+check "voltar para Caddy tira o override do Traefik (rc=0)" \
+  bash -c '[ "$1" -eq 0 ] && [ ! -e "$2" ]' _ "$rc" "$SB/docker-compose.deskcomm-traefik.yml"
+check "e o COMPOSE_FILE volta ao de sempre" \
+  grep -qx 'COMPOSE_FILE=docker-compose.yml:docker-compose.deskcomm.yml' "$SB/.env"
+
+if [ -n "$DOCKER_REAL" ] && "$DOCKER_REAL" compose version >/dev/null 2>&1; then
+  TCFG="$WORK/tcfg"; mkdir -p "$TCFG"
+  cp "$CFG/docker-compose.yml" "$TCFG/"
+  cp "$KIT_DIR/supabase-single-server.override.yml" "$TCFG/docker-compose.deskcomm.yml"
+  cp "$KIT_DIR/supabase-single-server.traefik.yml" "$TCFG/docker-compose.deskcomm-traefik.yml"
+  printf '%s\n' 'COMPOSE_FILE=docker-compose.yml:docker-compose.deskcomm.yml:docker-compose.deskcomm-traefik.yml' \
+    'COMPOSE_PROJECT_NAME=deskcommcrm-supabase' 'SINGLE_SERVER_NETWORK=deskcommcrm_supabase' \
+    'PROXY_DOMAIN=crmimob.exemplo.com' 'TRAEFIK_NETWORK="dokploy-network"' > "$TCFG/.env"
+  resolvido="$(cd "$TCFG" && env -i PATH="$PATH" HOME="$HOME" "$DOCKER_REAL" compose config --format json 2>&1)"; rc=$?
+  check "compose do Supabase aceita o override do Traefik" test "$rc" -eq 0
+  sonda="$(python3 -c '
+import json, sys
+c = json.loads(sys.argv[1]); gw = c["services"]["api-gw"]; lb = gw.get("labels") or {}
+regra = lb.get("traefik.http.routers.deskcomm-supabase.rule", "")
+print(" ".join([
+  "rede" if "deskcomm_proxy" in (gw.get("networks") or {}) and c["networks"]["deskcomm_proxy"].get("name") == "dokploy-network" else "SEM-REDE",
+  "host" if "Host(`crmimob.exemplo.com`)" in regra else "SEM-HOST",
+  "auth" if "PathPrefix(`/auth/v1`)" in regra and "PathPrefix(`/rest/v1`)" in regra else "SEM-ROTAS",
+  "porta" if lb.get("traefik.http.services.deskcomm-supabase.loadbalancer.server.port") == "8000" else "SEM-PORTA",
+  "so-gw" if not any("traefik.enable" in (s.get("labels") or {}) for n, s in c["services"].items() if n != "api-gw") else "OUTRO-PUBLICADO",
+]))' "$resolvido" 2>&1)"
+  check "só o gateway entra no Traefik, no domínio e nas rotas do Supabase" igual "$sonda" 'rede host auth porta so-gw'
+
+  CRMT="$WORK/crm-traefik"; mkdir -p "$CRMT"
+  cp "$ROOT/docker-compose.prod.yml" "$ROOT/docker-compose.single-server.yml" "$ROOT/docker-compose.traefik.yml" "$CRMT/"
+  printf '%s\n' 'SUPABASE_DB_URL=postgresql://postgres:x@supabase-db:5432/postgres' \
+    'DOMAIN=crmimob.exemplo.com' 'SINGLE_SERVER_NETWORK=deskcommcrm_supabase' 'TRAEFIK_NETWORK=dokploy-network' > "$CRMT/.env"
+  sonda="$(cd "$CRMT" && env -i PATH="$PATH" HOME="$HOME" "$DOCKER_REAL" compose \
+      -f docker-compose.prod.yml -f docker-compose.single-server.yml -f docker-compose.traefik.yml config --format json 2>/dev/null \
+    | python3 -c '
+import json, sys
+c = json.load(sys.stdin); app = c["services"]["app"]; redes = app.get("networks") or {}
+print(" ".join([
+  "sem-caddy" if "caddy" not in c["services"] else "CADDY-SOBE",
+  "proxy" if "proxy" in redes else "SEM-PROXY",
+  "privada" if "supabase_private" in redes else "SEM-PRIVADA",
+]))' 2>&1)"
+  check "CRM atrás do Traefik: sem Caddy, app no proxy e na rede do Supabase" igual "$sonda" 'sem-caddy proxy privada'
+else
+  echo "  - pulado: docker compose ausente (a prova do override roda onde ele existe)"
+fi
+
 echo "update.sh chama tudo isso no lugar certo:"
 U="$KIT_DIR/update.sh"
 l_guarda="$(grep -n 'recusar_supabase_de_outra_arvore ||' "$U" | cut -d: -f1)"
