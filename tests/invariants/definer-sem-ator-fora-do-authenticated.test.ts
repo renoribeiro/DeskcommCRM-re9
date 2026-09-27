@@ -5,7 +5,7 @@ import { sql } from "./gov-helpers";
 /**
  * VARREDURA: definer que `authenticated` executa precisa saber QUEM chamou
  * (achado B2 de `docs/imobiliario/04-auditoria-seguranca-e-qualidade.md`,
- * migration 0439).
+ * migration 5000).
  *
  * ## O vão entre os dois gates que já existiam
  *
@@ -129,7 +129,7 @@ const ORG_A = "b2b2b2b2-0000-4000-8000-00000000000a";
 const ORG_B = "b2b2b2b2-0000-4000-8000-00000000000b";
 const USER_A = "b2b2b2b2-1111-4000-8000-00000000000a";
 
-describe("B2 — definer executável por authenticated pergunta quem chamou (0439)", () => {
+describe("B2 — definer executável por authenticated pergunta quem chamou (5000)", () => {
   it("CONTROLE: a varredura acha funções e reconhece a conferência por delegação", () => {
     expect(FUNCOES.length).toBeGreaterThan(10);
     const conferem = FUNCOES.filter((f) => f.confereAtor).map((f) => f.assinatura.split("(")[0]);

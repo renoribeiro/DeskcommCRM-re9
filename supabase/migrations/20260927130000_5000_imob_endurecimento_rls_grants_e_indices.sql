@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- 0439 — Endurecimento do banco: mensagem presa à organização da conversa,
+-- 5000 (fork imob, ex-0439) — Endurecimento do banco: mensagem presa à organização da conversa,
 -- definer sem ator fora do alcance do usuário logado, TRUNCATE fora da REST,
 -- efêmero do agente fora do teto de tokens e índices das chaves estrangeiras.
 --

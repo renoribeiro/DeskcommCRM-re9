@@ -5,11 +5,11 @@ import { sql } from "./gov-helpers";
 /**
  * A MENSAGEM É DA MESMA ORGANIZAÇÃO QUE A CONVERSA — nas duas pontas da RLS
  * (achado B1 de `docs/imobiliario/04-auditoria-seguranca-e-qualidade.md`,
- * migration 0439).
+ * migration 5000).
  *
  * ## O ataque
  *
- * Até a 0439, `messages_insert` perguntava só "a LINHA é da sua organização?"
+ * Até a 5000, `messages_insert` perguntava só "a LINHA é da sua organização?"
  * e `messages_select` só "você enxerga a CONVERSA apontada?". Um atendente da
  * organização A gravava pela REST (anon key + o próprio JWT) uma mensagem com
  * `organization_id = A` e o `conversation_id` de uma conversa de B: o INSERT
@@ -107,7 +107,7 @@ beforeAll(() => {
   `);
 });
 
-describe("B1 — a mensagem é da mesma organização que a conversa (0439)", () => {
+describe("B1 — a mensagem é da mesma organização que a conversa (5000)", () => {
   it("CONTROLE: o atendente de A grava mensagem na conversa de A", () => {
     // Sem este caso, uma policy que recusasse TUDO deixaria o ataque abaixo
     // verde — e quebraria o envio pela tela.

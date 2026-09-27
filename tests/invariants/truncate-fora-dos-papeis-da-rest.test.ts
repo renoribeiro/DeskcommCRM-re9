@@ -5,7 +5,7 @@ import { sql } from "./gov-helpers";
 /**
  * NENHUMA TABELA DE `public` CONCEDE TRUNCATE A anon, authenticated OU PUBLIC
  * (achado B3 de `docs/imobiliario/04-auditoria-seguranca-e-qualidade.md`,
- * migration 0439).
+ * migration 5000).
  *
  * TRUNCATE ignora RLS — esvazia a tabela inteira, de todos os tenants. O
  * default ACL do Supabase (`GRANT ALL ON TABLES TO anon/authenticated`, que o
@@ -20,7 +20,7 @@ import { sql } from "./gov-helpers";
 
 const PAPEIS = ["anon", "authenticated"] as const;
 
-describe("B3 — TRUNCATE fora dos papéis do PostgREST (0439)", () => {
+describe("B3 — TRUNCATE fora dos papéis do PostgREST (5000)", () => {
   it("CONTROLE: a sonda enxerga TRUNCATE quando ele existe", () => {
     // Sem isto, uma consulta com erro de digitação devolveria vazio e o caso
     // de baixo ficaria verde pelo motivo errado. `service_role` mantém o

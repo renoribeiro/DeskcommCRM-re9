@@ -5425,7 +5425,7 @@ drop policy if exists "messages_insert" on public.messages;
 drop policy if exists "messages_update" on public.messages;
 drop policy if exists "messages_delete" on public.messages;
 
--- As três policies abaixo são as da migration 0439 (achado B1): a linha é de
+-- As três policies abaixo são as da migration 5000 (achado B1): a linha é de
 -- uma organização do usuário E a conversa apontada é da MESMA organização da
 -- linha. Redefinidas AQUI, no lugar da versão antiga, e não no fim do arquivo:
 -- uma versão intermediária diferente da final seria reinstalada a cada update
@@ -39260,8 +39260,8 @@ grant execute on function public.fn_metricas_links_rastreaveis(uuid) to service_
 
 notify pgrst, 'reload schema';
 
--- ---- endurecimento: definer sem ator e teto de tokens sem o efêmero (migration 0439) ----
--- Racional inteiro na migration 0439 (achados B2 e A5). Redefine função, então
+-- ---- endurecimento: definer sem ator e teto de tokens sem o efêmero (migration 5000) ----
+-- Racional inteiro na migration 5000 (achados B2 e A5). Redefine função, então
 -- fica ANTES da varredura de anon. `fn_resolve_inbound_number` só o servidor
 -- chama; `fn_colegas_podem_mexer_na_agenda` só responde pela organização de
 -- quem chama; o efêmero `agent-run:` do turno do agente sai do teto da 0415.
@@ -39323,6 +39323,116 @@ begin
 end;
 $$;
 revoke execute on function public.fn_teto_de_tokens_ativos() from public, anon, authenticated;
+
+
+-- ---- token de pessoa só com escopo concedível (migration 5001) ----
+-- Racional inteiro na migration 5001 (achado R7, a parte de banco do A4).
+-- Cria função, então fica ANTES da varredura de anon. Com JWT de pessoa, o
+-- gatilho recusa (PT403) escopo fora da lista concedível, actor:/agent_run:,
+-- nome agent-run: e role: acima do papel de quem grava; service role passa.
+create or replace function public.fn_token_de_pessoa_so_com_escopo_concedivel()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  -- Espelho literal de ESCOPOS_DE_TOKEN_CONCEDIVEIS (lib/schemas/team.ts).
+  v_escopos_concediveis constant text[] := array[
+    'mcp:read',
+    'mcp:write',
+    'role:viewer',
+    'role:agent',
+    'role:manager',
+    'role:admin',
+    'contacts:read',
+    'contacts:write',
+    'leads:read',
+    'leads:write',
+    'messages:read',
+    'messages:write',
+    'messages:on_behalf',
+    'audit:read'
+  ];
+  v_escopo     jsonb;
+  v_texto      text;
+  v_rank_quem  integer;
+  v_rank_token integer;
+begin
+  -- Sem ator humano: service role (mint efêmero, provisionamento, seeds).
+  if auth.uid() is null then
+    return new;
+  end if;
+
+  -- UPDATE que não mexe em escopo nem nome (revogar, last_used_at) passa.
+  if tg_op = 'UPDATE'
+     and new.scopes is not distinct from old.scopes
+     and new.name is not distinct from old.name then
+    return new;
+  end if;
+
+  if coalesce(new.name, '') ~* '^\s*agent-run:' then
+    raise exception 'O nome "%" é reservado para uso interno. Escolha outro.', new.name
+      using errcode = 'PT403';
+  end if;
+
+  if pg_catalog.jsonb_typeof(new.scopes) is distinct from 'array' then
+    raise exception 'Os escopos do token precisam ser uma lista.'
+      using errcode = 'PT403';
+  end if;
+
+  v_rank_quem := case public.fn_user_role_in_org(new.organization_id)
+    when 'viewer'  then 1
+    when 'agent'   then 2
+    when 'manager' then 3
+    when 'admin'   then 4
+    else 0
+  end;
+
+  for v_escopo in select e from pg_catalog.jsonb_array_elements(new.scopes) as t(e) loop
+    if pg_catalog.jsonb_typeof(v_escopo) is distinct from 'string' then
+      raise exception 'Escopo de token inválido: %.', v_escopo
+        using errcode = 'PT403';
+    end if;
+    v_texto := v_escopo #>> '{}';
+
+    if v_texto like 'actor:%' or v_texto like 'agent_run:%' then
+      raise exception 'O escopo "%" é do servidor e não pode ser concedido a um token de pessoa.', v_texto
+        using errcode = 'PT403';
+    end if;
+
+    if not (v_texto = any (v_escopos_concediveis)) then
+      raise exception 'Escopo de token não concedível: "%".', v_texto
+        using errcode = 'PT403';
+    end if;
+
+    if v_texto like 'role:%' then
+      v_rank_token := case pg_catalog.substr(v_texto, 6)
+        when 'viewer'  then 1
+        when 'agent'   then 2
+        when 'manager' then 3
+        when 'admin'   then 4
+      end;
+      if v_rank_token > v_rank_quem and not public.fn_is_platform_admin() then
+        raise exception 'O papel do token não pode ser maior que o seu.'
+          using errcode = 'PT403';
+      end if;
+    end if;
+  end loop;
+
+  return new;
+end;
+$$;
+
+revoke execute on function public.fn_token_de_pessoa_so_com_escopo_concedivel() from public, anon, authenticated;
+
+drop trigger if exists trg_valida_token_de_pessoa on public.api_tokens;
+create trigger trg_valida_token_de_pessoa
+  before insert or update on public.api_tokens
+  for each row execute function public.fn_token_de_pessoa_so_com_escopo_concedivel();
+
+comment on function public.fn_token_de_pessoa_so_com_escopo_concedivel() is
+  'Gatilho de api_tokens (migration 5001, fork imob, achado R7/A4): com ator humano (auth.uid() não nulo) recusa com PT403 escopo fora da lista concedível (espelho de ESCOPOS_DE_TOKEN_CONCEDIVEIS), prefixos actor:/agent_run:, nome agent-run: e role: acima do papel de quem grava. Service role passa.';
 
 
 -- ---- VARREDURA anon: função nova nasce exposta em quem ATUALIZA (migration 0116) ----
@@ -40406,8 +40516,8 @@ alter table public.crm_stages
   add constraint crm_stages_win_probability_range
   check (win_probability is null or win_probability between 0 and 100);
 
--- ---- endurecimento: mensagem presa à conversa, TRUNCATE e índices (migration 0439) ----
--- Racional inteiro na migration 0439 (achados B1, B3, B5, B6). Sem função
+-- ---- endurecimento: mensagem presa à conversa, TRUNCATE e índices (migration 5000) ----
+-- Racional inteiro na migration 5000 (achados B1, B3, B5, B6). Sem função
 -- criada. Fica no FIM do arquivo de propósito: o `revoke truncate` tem de vir
 -- depois de toda tabela do apêndice, porque o `ALTER DEFAULT PRIVILEGES ...
 -- GRANT ALL ON TABLES` do corpo do dump é reaplicado a cada `update.sh` e
