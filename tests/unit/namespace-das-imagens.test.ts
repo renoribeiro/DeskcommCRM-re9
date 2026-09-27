@@ -230,6 +230,23 @@ describe("o default do compose diz o mesmo que o kit", () => {
   });
 });
 
+describe("o compose do Dokploy diz o mesmo que o kit", () => {
+  // `docker-compose.dokploy.yml` é a TERCEIRA declaração independente de onde as
+  // imagens moram (a do deploy pelo Dokploy, sem o kit). Mesmo argumento do bloco
+  // acima: YAML não deriva de shell, então ele é conferido contra IMG_NS aqui, e
+  // por isso pode constar da allowlist da catraca abaixo.
+  const servicos = ["app", "worker", "scheduler"] as const;
+  servicos.forEach((servico, i) => {
+    it(`a imagem de ${servico} usa o namespace de IMG_NS`, () => {
+      const texto = fs.readFileSync(path.join(RAIZ, "docker-compose.dokploy.yml"), "utf8");
+      const bloco = texto.split(new RegExp(`^  ${servico}:\\s*$`, "m"))[1] ?? "";
+      const m = bloco.match(/^\s*image: (\S+):\$\{IMAGE_TAG:-stable\}\s*$/m);
+      expect(m, `não achei \`image: <ref>:\${IMAGE_TAG:-stable}\` no serviço ${servico}`).not.toBeNull();
+      expect(m![1]).toBe(`${imgNs()}/${reposDoKit()[i]}`);
+    });
+  });
+});
+
 describe("o kit aponta para o que o CI realmente publica", () => {
   it("os defaults de código e os labels de origem apontam para este repositório", () => {
     // A URL DERIVA do namespace, e não é economia de digitação: é o que prende a
@@ -335,6 +352,8 @@ describe("catraca: ninguém mais repete o namespace", () => {
   const PERMITIDO = new Set([
     "hostgator-setup-kit/_common.sh",
     "docker-compose.prod.yml",
+    // Deploy pelo Dokploy (CRM + Supabase, sem o kit); conferido acima.
+    "docker-compose.dokploy.yml",
     ".env.hostgator.example",
     // FIXTURE de comentário REAL de PR, capturada para os instrumentos de triagem.
     // O literal aparece dentro do texto que um humano escreveu num PR

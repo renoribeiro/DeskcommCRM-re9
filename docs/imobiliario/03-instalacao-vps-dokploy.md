@@ -11,34 +11,37 @@ last_updated: 2026-09-27
 > `crmimob.re9imob.com.br`, numa VPS da Hostinger (4 vCPU, 8 GB de RAM) que já tem o **Dokploy**.
 > O banco (Supabase) fica **dentro da própria VPS** (decisão F do plano).
 >
-> **Como funciona:** o kit de instalação do projeto sobe tudo com um comando: Supabase, CRM,
-> worker da IA, agendador, WhatsApp não oficial e Redis. Ele percebe sozinho que o Dokploy já
-> tem um **Traefik** nas portas 80/443 e publica o CRM **através dele**, sem derrubar nada do
-> Dokploy. Esse caminho foi implementado na fase 0; os testes estão em
-> `tests/shell/single-server-operacao.test.sh`, bloco (e).
+> Há dois caminhos, e os dois resultam no mesmo sistema:
+>
+> | | **A. Pelo Dokploy** (recomendado para você) | **B. Pelo kit, via SSH** |
+> |---|---|---|
+> | Como | Um serviço Compose no painel do Dokploy lendo `docker-compose.dokploy.yml` do GitHub | Um comando no terminal da VPS (`install-single-server.sh`) |
+> | Atualizar | Botão **Deploy** do Dokploy | `bash hostgator-setup-kit/update.sh` |
+> | Backup | Volumes do Dokploy (ou `pg_dump`, abaixo) | `bash hostgator-setup-kit/backup.sh` |
+> | Gerenciado por | Dokploy | Kit (os contêineres aparecem no Dokploy, mas não se editam lá) |
 
 ## O que vai rodar na VPS
 
 | Peça | Para quê | Memória aproximada |
 |---|---|---|
 | Dokploy + Traefik (já existem) | Painel e proxy com HTTPS | ~0,5 GB |
-| Supabase (Postgres, Auth, REST, Realtime, Storage, gateway…) | Banco, login, arquivos | ~2–2,5 GB |
+| Supabase (Postgres, Auth, REST, Realtime, Storage, imgproxy, gateway) | Banco, login, arquivos | ~1,5–2 GB |
 | `app` (o ImobCRM) | Telas e API | até 0,75 GB |
 | `worker` | Agente de IA | até 0,5 GB |
 | `scheduler` | Tarefas agendadas (lembretes, follow-ups, limpeza) | pequeno |
-| `waha` | WhatsApp não oficial (opcional; a oficial da Meta não usa) | até 1,25 GB |
+| `waha` | WhatsApp não oficial (a oficial da Meta não usa) | até 1,25 GB |
 | `redis` + `srh` | Limites de uso e filas leves | pequeno |
+| `setup` | Roda a cada deploy e **sai**: prepara o banco e cria o administrador | — |
 
-Total estimado: **5 a 6 GB** de 8 GB. Cabe, e o passo 3 cria uma memória de reserva (swap) por
-segurança.
+Total estimado: **5 a 6 GB** de 8 GB.
 
 ---
 
 ## Antes de começar (uma vez só)
 
-### A. DNS
+### 1. DNS
 
-No painel onde está o domínio `re9imob.com.br`, crie o registro:
+No painel do domínio `re9imob.com.br`, crie o registro:
 
 | Tipo | Nome | Valor | TTL |
 |---|---|---|---|
@@ -46,133 +49,153 @@ No painel onde está o domínio `re9imob.com.br`, crie o registro:
 
 Confira (do seu computador): `nslookup crmimob.re9imob.com.br`. Tem de responder o IP da VPS.
 
-### B. Imagens públicas do ImobCRM
+### 2. Imagens públicas
 
-Quem constrói e publica as imagens do sistema é o GitHub, a cada mudança na `main` do fork. **O
-GitHub cria os pacotes como privados**, e a VPS não consegue baixar pacote privado. Depois da
-primeira publicação:
+As imagens do sistema são construídas pelo GitHub a cada mudança na `main` do fork. Para isso:
 
-1. Abra `https://github.com/renoribeiro?tab=packages`.
-2. Para cada um dos pacotes `deskcommcrm`, `deskcomm-worker`, `deskcomm-scheduler` e
-   `deskcomm-voice-agent`, entre em **Package settings → Change visibility → Public**.
-
-> Se preferir manter as imagens privadas, é possível (exige `docker login ghcr.io` na VPS com um
-> token de leitura). Recomendamos públicas: o código já é open source (MIT) e não há segredo
-> dentro das imagens.
-
-### C. Versão publicada
-
-O instalador instala sempre **um número de versão**, nunca "a última coisa que entrou". A
-primeira versão do ImobCRM é marcada no GitHub (tag) depois que a fase 0 entra na `main`.
-
----
-
-## Instalação
-
-Todos os comandos são digitados na VPS, pelo terminal (SSH) da Hostinger ou pelo seu computador:
-`ssh root@IP-DA-VPS`.
-
-### 1. Confirme que o Traefik do Dokploy está de pé
-
-```bash
-docker ps --format '{{.Names}}  {{.Ports}}' | grep -i traefik
-```
-
-Deve aparecer algo como `dokploy-traefik  0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp`.
-**Não desligue esse contêiner:** é ele que dá HTTPS ao Dokploy e agora também ao ImobCRM.
-
-### 2. Ferramentas que o instalador usa
-
-```bash
-apt-get update && apt-get install -y git curl jq openssl
-```
-
-O Docker já vem com o Dokploy.
+1. **Ligue o GitHub Actions no fork**: `https://github.com/renoribeiro/DeskcommCRM-re9/actions`
+   → botão **"I understand my workflows, go ahead and enable them"**. Em fork, o GitHub vem com
+   o Actions desligado; sem ele, nenhuma imagem é publicada.
+2. Depois da primeira publicação, abra `https://github.com/renoribeiro?tab=packages` e, em
+   **cada** pacote (`deskcommcrm`, `deskcomm-worker`, `deskcomm-scheduler` e
+   `deskcomm-voice-agent`), use **Package settings → Change visibility → Public**. O GitHub cria
+   os pacotes como privados, e a VPS não consegue baixar pacote privado.
 
 ### 3. Memória de reserva (swap de 4 GB)
+
+No terminal da VPS (Dokploy › Servidor › Terminal, ou `ssh root@IP`):
 
 ```bash
 swapon --show | grep -q . || { fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile && echo '/swapfile none swap sw 0 0' >> /etc/fstab; }
 free -h
 ```
 
-### 4. Baixe o ImobCRM
+---
+
+## Caminho A: pelo Dokploy
+
+### A1. Gere as variáveis (senhas e chaves)
+
+Em qualquer máquina com `bash` e `openssl`: o terminal da VPS, um Mac ou um Linux.
 
 ```bash
-git clone --depth 1 https://github.com/renoribeiro/DeskcommCRM-re9.git /opt/imobcrm
-cd /opt/imobcrm
+git clone --depth 1 https://github.com/renoribeiro/DeskcommCRM-re9.git /tmp/imobcrm
+bash /tmp/imobcrm/infra/dokploy/gerar-env.sh \
+  --dominio crmimob.re9imob.com.br \
+  --email SEU-EMAIL@re9imob.com.br \
+  --versao VERSAO
 ```
 
-> O nome da pasta (`imobcrm`) vira o nome do projeto no Docker. Não troque depois.
-> Se o repositório for privado, o `git clone` pede usuário e um **token** do GitHub com
-> permissão só de leitura.
+- Troque `VERSAO` pelo número da versão publicada (ex.: `1.57.0`).
+- O comando imprime um bloco de texto. **Guarde-o num gerenciador de senhas.** Ele traz a senha do
+  administrador (`OWNER_PASSWORD`) e as chaves do banco.
+- **Não gere de novo depois de instalar:** trocar `POSTGRES_PASSWORD` ou `JWT_SECRET` depois que o
+  banco nasceu deixa o CRM sem acesso a ele.
 
-### 5. Instale
+### A2. Crie o serviço no Dokploy
 
-```bash
-APP_NAME=ImobCRM bash hostgator-setup-kit/install-single-server.sh --domain crmimob.re9imob.com.br
+1. Dokploy › seu projeto › **Create Service → Compose**, com o nome `imobcrm`.
+2. Aba **General › Provider: Git**:
+   - Repository URL: `https://github.com/renoribeiro/DeskcommCRM-re9.git`
+   - Branch: `main`
+   - Compose Path: `./docker-compose.dokploy.yml`
+3. Aba **Environment**: cole **todo** o bloco gerado no passo A1 e salve.
+4. **Não configure nada na aba Domains.** As rotas já estão no arquivo: o CRM e o login dividem o
+   mesmo domínio, separados por caminho.
+5. Clique em **Deploy**.
+
+### A3. Acompanhe
+
+Na aba **Logs** do serviço, o contêiner `setup` mostra:
+
+```
+[setup] banco novo — aplicando o baseline (qualquer erro interrompe)
+[setup] tabelas em public: 180
+[setup] primeiro administrador: SEU-EMAIL@re9imob.com.br
+[setup] pronto
 ```
 
-O que você vai ver:
+Depois disso sobem `app`, `worker` e `scheduler`. O primeiro deploy leva de 5 a 15 minutos, por
+causa do download das imagens.
 
-- **"Preparando o Supabase self-hosted"**: baixa e confere a assinatura do instalador oficial.
-- **"Detectei um Traefik já rodando neste VPS"**: é o do Dokploy, e o CRM vai sair por ele.
-- **"Publicando as APIs do Supabase pelo Traefik da VPS"**: o login do navegador passa pelo
-  mesmo domínio.
-- No fim, **usuário e senha do administrador**. Guarde num gerenciador de senhas. Eles também
-  ficam em `/opt/imobcrm/.runtime/admin-credentials`, arquivo que só o root lê.
-
-A instalação leva de 10 a 20 minutos na primeira vez.
-
-### 6. Confira
+### A4. Confira
 
 ```bash
 curl -sI https://crmimob.re9imob.com.br | head -1
 ```
 
-O esperado é **`HTTP/2 307`** (redireciona para o login). **`404` quer dizer que o Traefik não
-achou o CRM**; nesse caso, rode `bash hostgator-setup-kit/diagnostico.sh` e me envie a saída.
+O esperado é **`HTTP/2 307`** (redireciona para o login). Abra
+`https://crmimob.re9imob.com.br`, entre com `OWNER_EMAIL` e `OWNER_PASSWORD` do passo A1 e **troque
+a senha** em Configurações › Perfil.
 
-Depois abra `https://crmimob.re9imob.com.br` no navegador e entre com o usuário e a senha do
-passo 5.
+| Sintoma | Causa provável |
+|---|---|
+| `404 page not found` | O Traefik não achou o CRM: o `app` não subiu (veja os Logs) ou o DNS ainda não propagou |
+| Página abre, mas o login dá erro | O `api-gw` (gateway do Supabase) não subiu: veja os Logs dele |
+| `setup` termina com erro | A mensagem diz o passo. O mais comum é a chave do Supabase: gere tudo de novo **só** se o banco ainda não tiver sido criado |
+| `pull access denied` | Os pacotes do GitHub ainda estão privados (item 2 de "Antes de começar") |
+
+### A5. Atualizar
+
+1. Na aba **Environment**, troque `IMAGE_TAG` para o número novo.
+2. Clique em **Deploy**.
+
+O `setup` reaplica o banco em modo atualização (é seguro e idempotente) antes do app novo subir.
+
+### A6. Backup
+
+O que precisa de backup são os volumes `db-data` (banco) e `storage-data` (fotos e arquivos).
+Backup do banco pelo terminal da VPS:
+
+```bash
+docker exec $(docker ps -qf 'name=imobcrm.*-db-1' | head -1) pg_dump -U postgres -Fc postgres > /root/imobcrm-$(date +%F).dump
+```
+
+Automatize com o agendamento do Dokploy ou com o `cron` da VPS, e copie os arquivos para fora da
+VPS (Google Drive, S3, outro servidor).
 
 ---
 
-## Primeiros ajustes pela tela
+## Caminho B: pelo kit, via SSH
+
+Use este caminho se preferir que o kit do projeto cuide de instalar, atualizar e fazer backup.
+
+```bash
+apt-get update && apt-get install -y git curl jq openssl
+git clone --depth 1 https://github.com/renoribeiro/DeskcommCRM-re9.git /opt/imobcrm
+cd /opt/imobcrm
+APP_NAME=ImobCRM bash hostgator-setup-kit/install-single-server.sh --domain crmimob.re9imob.com.br
+```
+
+O instalador:
+
+- detecta o Traefik do Dokploy e publica o CRM e as APIs do Supabase por ele, sem derrubar nada;
+- no fim, mostra o usuário e a senha do administrador, também gravados em
+  `/opt/imobcrm/.runtime/admin-credentials`.
+
+No dia a dia, rode dentro de `/opt/imobcrm`:
+
+- atualizar: `bash hostgator-setup-kit/update.sh`
+- backup: `bash hostgator-setup-kit/backup.sh`
+- diagnóstico: `bash hostgator-setup-kit/diagnostico.sh`
+
+**Não crie o CRM também como serviço do Dokploy** se usar este caminho: são dois caminhos, escolha
+um.
+
+---
+
+## Primeiros ajustes pela tela (os dois caminhos)
 
 | Onde | O quê |
 |---|---|
-| **Administração › Marca** | Nome **ImobCRM**, logo e cor. A marca fica no banco e sobrevive às atualizações |
-| **Administração › E-mail** | SMTP para "esqueci a senha", convites e alertas. Depois de salvar, rode `bash hostgator-setup-kit/update.sh` para o login também usar esse e-mail |
+| **Administração › Marca** | Nome **ImobCRM**, logo e cor |
+| **Administração › E-mail** | SMTP para "esqueci a senha", convites e alertas. No caminho A, preencha também as variáveis `SMTP_*` no Environment e faça Deploy, para o login usar o mesmo e-mail |
 | **IA › Credenciais** | A chave de IA **da RE9 Imob** (decisão A) |
-| **Conexões** | WhatsApp pela **API oficial da Meta** (decisão B), com a conta já verificada |
-| **Equipe** | Convite dos corretores |
-
----
-
-## No dia a dia
-
-| Tarefa | Comando (na pasta `/opt/imobcrm`) |
-|---|---|
-| **Atualizar** para a versão mais nova | `bash hostgator-setup-kit/update.sh` |
-| **Backup** (banco + arquivos + sessões do WhatsApp) | `bash hostgator-setup-kit/backup.sh` |
-| **Restaurar** um backup | `bash hostgator-setup-kit/restore.sh <arquivo>` |
-| **Diagnóstico** quando algo parece errado | `bash hostgator-setup-kit/diagnostico.sh` |
-
-**Backup automático diário, às 3h:**
-
-```bash
-( crontab -l 2>/dev/null; echo '0 3 * * * cd /opt/imobcrm && bash hostgator-setup-kit/backup.sh >> /var/log/imobcrm-backup.log 2>&1' ) | crontab -
-```
-
-Copie os backups para fora da VPS (Google Drive, S3, outro servidor). Backup que mora só na
-máquina que pode quebrar não é backup.
+| **Conexões** | WhatsApp pela **API oficial da Meta** (decisão B) |
+| **Equipe** | Convite dos corretores. O cadastro é **só por convite**: ninguém de fora cria conta sozinho |
 
 ## O que NÃO fazer
 
-- **Não crie o ImobCRM como aplicação dentro do Dokploy.** Ele é gerenciado pelo kit (instalar,
-  atualizar, backup). O Dokploy continua útil para os seus outros sistemas, e os contêineres do
-  ImobCRM aparecem na lista, mas não os edite por lá.
-- **Não pare o `dokploy-traefik`.** O domínio inteiro sai do ar.
-- **Não rode `docker compose up` à mão** sem os arquivos certos. Use sempre os scripts do kit;
-  eles sabem quais arquivos combinar, e um `up` sem o arquivo do Traefik deixa o domínio em 404.
+- **Não pare o `dokploy-traefik`:** o domínio inteiro sai do ar.
+- **Não apague os volumes** `db-data` e `storage-data`: é onde moram o banco e os arquivos.
+- **Não gere as variáveis de novo** depois da instalação (passo A1).
