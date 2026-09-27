@@ -53,6 +53,8 @@ de menor precedência e registre.
 | [`prd/06-prd-nuvemshop-lgpd.md`](prd/06-prd-nuvemshop-lgpd.md) | Integração Nuvemshop + webhooks LGPD |
 | [`business-rules/00-business-rules-catalog.md`](business-rules/00-business-rules-catalog.md) | **Catálogo de regras de negócio** — fonte da verdade fora do código |
 | [`presentation/pitch-deck.md`](presentation/pitch-deck.md) | Pitch |
+| [`imobiliario/01-auditoria.md`](imobiliario/01-auditoria.md) | Auditoria do código para o vertical imobiliário (retrato de `38dd469`) |
+| [`imobiliario/02-plano-vertical-imobiliario.md`](imobiliario/02-plano-vertical-imobiliario.md) | **Plano do vertical imobiliário** — arquitetura, modelo de domínio, IA, épicos E0–E18, compliance, roadmap |
 
 ## 3. Contrato técnico (specs)
 
