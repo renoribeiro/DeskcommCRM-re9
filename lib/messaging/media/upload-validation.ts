@@ -22,7 +22,6 @@ export type MessageKind = "image" | "video" | "audio" | "document";
 export function caminhoDeStorageDentroDe(caminho: string, prefixo: string): boolean {
   if (typeof caminho !== "string" || caminho.length === 0 || caminho.length > 500) return false;
   if (!prefixo.endsWith("/") || prefixo.length < 2) return false;
-  // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f\\%]/.test(caminho)) return false;
   if (caminho.includes("//")) return false;
   if (caminho.startsWith("/")) return false;
