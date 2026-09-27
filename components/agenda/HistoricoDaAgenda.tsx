@@ -76,7 +76,13 @@ function separar(agendamentos: Agendamento[], agora: Date): Record<AbaDoHistoric
       vazio.aguardando.push(a);
       continue;
     }
-    (isBefore(new Date(a.comeca), agora) ? vazio.passados : vazio.proximos).push(a);
+    // "Passado" é o que TERMINOU. Uma visita que começou às 14h32 e dura 30 min
+    // está acontecendo às 14h37: ela segue em Próximos, e Passados (que oferece
+    // "Realizado" e "Faltou") só a recebe quando acaba — senão o produto pergunta
+    // se aconteceu antes de ter acontecido. Mesma régua de `lib/agenda/consulta.ts`
+    // (`starts_at < ate AND ends_at > de`), que já trata o horário como ocupado
+    // até o fim.
+    (isBefore(new Date(a.termina), agora) ? vazio.passados : vazio.proximos).push(a);
   }
   return vazio;
 }
