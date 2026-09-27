@@ -7,7 +7,8 @@
  *
  * Contrato de erro: encrypt SEM chave configurada retorna null (o caller
  * decide — rotas de escrita respondem 422 com instrução); decrypt que falha
- * retorna null (o caller aplica o precedente WAHA: hmacSkipped, nunca 500).
+ * retorna null e o caller decide. Quem VERIFICA assinatura com o segredo falha
+ * FECHADO (a captação responde 503 — auditoria P8); nunca 500.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger } from "@/lib/logger";

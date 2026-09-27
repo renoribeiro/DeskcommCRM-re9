@@ -27,6 +27,7 @@ export type DesfechoDaCaptacao = "criado" | "duplicado" | "recusado";
 export type MotivoDaRecusa =
   | "sem_campo_mapeavel"
   | "assinatura_invalida"
+  | "segredo_indisponivel"
   | "erro_ao_criar_lead";
 
 /** O que a tela mostra para cada motivo, em português de gente. */
@@ -35,6 +36,8 @@ export const MOTIVO_DA_RECUSA_LABEL: Record<MotivoDaRecusa, string> = {
     "O envio não trazia nome, telefone nem e-mail reconhecíveis — confira os nomes dos campos do formulário.",
   assinatura_invalida:
     "A assinatura não conferiu. Quem enviou não usou o segredo configurado nesta fonte.",
+  segredo_indisponivel:
+    "O segredo desta fonte não pôde ser lido nesta instalação (chave de cifragem ausente ou trocada), então o envio foi recusado em vez de aceito sem conferir. A ferramenta costuma reenviar sozinha; se persistir, recadastre o segredo da fonte.",
   erro_ao_criar_lead:
     "Os dados chegaram, mas o lead não pôde ser criado — confira se o funil e a etapa da fonte ainda existem.",
 };
