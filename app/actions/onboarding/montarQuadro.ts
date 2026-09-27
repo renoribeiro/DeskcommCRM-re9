@@ -10,7 +10,7 @@
  */
 import { redirect } from "next/navigation";
 import { generateText } from "ai";
-import { sinalDaChamadaAoModelo } from "@/lib/ai/tempo-da-chamada";
+import { sinalDoTurno } from "@/lib/ai/tempo-da-chamada";
 
 import { audit } from "@/lib/audit";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -161,9 +161,10 @@ export async function dadosDoPasso(orgId: string, negocio: string): Promise<Dado
       // discursar bate no teto em vez de queimar o crédito de quem acabou de
       // colar a chave.
       maxOutputTokens: 900,
-      // Teto de tempo (LLM_CALL_TIMEOUT_MS): a tela do onboarding não espera um
-      // provedor travado para sempre.
-      abortSignal: sinalDaChamadaAoModelo(),
+      // Teto do turno (LLM_TURN_TIMEOUT_MS): a tela do onboarding não espera um
+      // provedor travado para sempre. O teto por requisição (LLM_CALL_TIMEOUT_MS)
+      // vem no `fetch` de `buildModel`.
+      abortSignal: sinalDoTurno(),
     });
     return r.text;
   });

@@ -26,7 +26,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, stepCountIs, type LanguageModel, type StopCondition, type ToolSet } from "ai";
-import { sinalDaChamadaAoModelo } from "@/lib/ai/tempo-da-chamada";
+import { fetchComTetoPorRequisicao, sinalDoTurno } from "@/lib/ai/tempo-da-chamada";
 
 // Fonte única do endpoint — a mesma constante que o registry de produção usa.
 // Repetir a URL aqui criaria dois lugares para consertar quando ela mudar.
@@ -176,11 +176,11 @@ export function buildModel(
 ): LanguageModel {
   switch (provider) {
     case "anthropic":
-      return createAnthropic({ apiKey })(modelId);
+      return createAnthropic({ apiKey, fetch: fetchComTetoPorRequisicao() })(modelId);
     case "openai":
-      return createOpenAI({ apiKey })(modelId);
+      return createOpenAI({ apiKey, fetch: fetchComTetoPorRequisicao() })(modelId);
     case "google":
-      return createGoogleGenerativeAI({ apiKey })(modelId);
+      return createGoogleGenerativeAI({ apiKey, fetch: fetchComTetoPorRequisicao() })(modelId);
     // O ensaio precisa alcançar o mesmo provedor que o turno real alcança.
     // Sem este caso, o dono que instalou pela opção [1] do instalador publica
     // o agente, clica em "Teste" para conferir antes de confiar, e recebe
@@ -191,16 +191,17 @@ export function buildModel(
         apiKey,
         baseURL: OPENROUTER_ENDPOINT,
         headers: cabecalhosDeAtribuicaoOpenRouter(),
+        fetch: fetchComTetoPorRequisicao(),
       }).chat(modelId); // chat/completions: a OpenRouter não serve /responses para todo modelo (#1130)
     // Mesma fábrica OpenAI-compatível que o registry de produção usa. Sem este
     // caso, o dono que publicou em DeepSeek receberia `unsupported_provider` no
     // ensaio enquanto o worker responderia a mensagem real — ensaio mais
     // rígido que a produção mente sobre o que está quebrado.
     case "deepseek":
-      return createOpenAI({ apiKey, baseURL: DEEPSEEK_ENDPOINT })(modelId);
+      return createOpenAI({ apiKey, baseURL: DEEPSEEK_ENDPOINT, fetch: fetchComTetoPorRequisicao() })(modelId);
     // Requesty: roteador OpenAI-compatível, pelo mesmo `.chat()` do registry.
     case "requesty":
-      return createOpenAI({ apiKey, baseURL: REQUESTY_ENDPOINT }).chat(modelId);
+      return createOpenAI({ apiKey, baseURL: REQUESTY_ENDPOINT, fetch: fetchComTetoPorRequisicao() }).chat(modelId);
     // Provedor personalizado (#1642): o endereço vem da credencial, junto da
     // chave. SEM endereço a chamada é RECUSADA — ensaio que fosse para a
     // OpenAI com a chave de um gateway privado diria que o produto não
@@ -213,7 +214,11 @@ export function buildModel(
       }
       // Endereço escolhido pela empresa: mesma régua de destino do turno do
       // agente (`providers.ts`), senão o ensaio seria a porta para a rede interna.
-      return createOpenAI({ apiKey, baseURL: baseUrl, fetch: fetchParaDestinoDaOrganizacao() }).chat(modelId);
+      return createOpenAI({
+        apiKey,
+        baseURL: baseUrl,
+        fetch: fetchComTetoPorRequisicao(fetchParaDestinoDaOrganizacao()),
+      }).chat(modelId);
     default:
       throw new Error(`unsupported_provider: ${provider}`);
   }
@@ -570,8 +575,9 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       messages,
       tools,
       stopWhen: [stepCountIs(version.max_steps), budgetGuard],
-      // Teto de tempo (LLM_CALL_TIMEOUT_MS): provedor travado não prende o turno.
-      abortSignal: sinalDaChamadaAoModelo(),
+      // Teto do TURNO (LLM_TURN_TIMEOUT_MS): passos + ferramentas. O teto de
+      // cada requisição (LLM_CALL_TIMEOUT_MS) mora no `fetch` de `buildModel`.
+      abortSignal: sinalDoTurno(),
     });
 
     // 12) Aggregate metrics.
