@@ -4,12 +4,23 @@
  * Flow:
  *  1. Validate JWT via getUser() (NEVER getSession on backend per CLAUDE.md).
  *  2. Confirm row in platform_admins (active = no revoked_at).
- *  3. Enforce MFA AAL2 if `mfa_required` (default true for platform admins).
+ *  3. Enforce MFA AAL2 when `mfa_required` OR the admin has a verified factor.
  *
  * Redirects:
  *  - no user        → /login?next=/admin
  *  - no row         → /admin/forbidden
- *  - aal1 + required → /login/mfa?next=/admin
+ *  - aal1 + (required OR has factor) → /login/mfa?next=/admin
+ *
+ * ⚠️ ROTAS DE API não podem devolver o redirect: elas chamam isto dentro de um
+ * `try/catch` e respondem com `falhaDoGuardaDeAdmin(err, requestId)`
+ * (`lib/auth/falha-do-guarda-de-admin.ts`), que traduz o redirect para
+ * `/login/mfa` em 403 `mfa_required` e qualquer outra falha em 403 `forbidden`.
+ *
+ * "TEM FATOR" É A PERGUNTA "PROVAR" da doutrina (CLAUDE.md): `mfa_required` é
+ * política de CADASTRO, e sozinha deixava o admin que ativou o TOTP por vontade
+ * própria operar as rotas da plataforma com a sessão `aal1` — só com a senha.
+ * O fator vem do `user.factors` do `getUser()` (resposta do GoTrue), nunca do
+ * `nextLevel`, que é calculado da cópia do usuário no cookie.
  *
  * The middleware already does an early `fn_is_platform_admin` RPC check;
  * this helper performs the authoritative server-side validation inside the
@@ -19,6 +30,8 @@
 import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { temFatorVerificado } from "@/lib/auth/garantia-da-sessao";
+import { ROTA_DA_PROVA_DE_MFA_DO_ADMIN } from "@/lib/auth/falha-do-guarda-de-admin";
 
 export interface PlatformAdminInfo {
   user_id: string;
@@ -53,10 +66,11 @@ export async function requirePlatformAdmin(): Promise<PlatformAdminContext> {
     redirect("/admin/forbidden");
   }
 
-  if (paRow.mfa_required) {
-    const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-    if (aalData?.currentLevel !== "aal2") {
-      redirect("/login/mfa?next=/admin");
+  if (paRow.mfa_required || temFatorVerificado(user)) {
+    const { data: aalData, error: aalErr } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    // Falha fechada: leitura com erro não prova nada.
+    if (aalErr || aalData?.currentLevel !== "aal2") {
+      redirect(ROTA_DA_PROVA_DE_MFA_DO_ADMIN);
     }
   }
 

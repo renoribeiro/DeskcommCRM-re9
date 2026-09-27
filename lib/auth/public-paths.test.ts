@@ -71,4 +71,22 @@ describe("isPublicPath", () => {
   it("nem um sub-path do lead (clone, move, lose, win, …) passa de carona", () => {
     expect(isPublicPath("/api/v1/leads/11111111-1111-4111-8111-111111111111/clone")).toBe(false);
   });
+
+  /**
+   * O túnel do Sentry (`tunnelRoute` do `next.config.ts`) recebe os erros do
+   * navegador — inclusive os da tela de login, onde ainda não há sessão.
+   */
+  it("libera o túnel do Sentry, e só o caminho exato", () => {
+    expect(isPublicPath("/monitoring")).toBe(true);
+    expect(isPublicPath("/monitoring/x")).toBe(false);
+    expect(isPublicPath("/monitoringx")).toBe(false);
+  });
+
+  it("o caminho liberado é o mesmo que o next.config.ts declara", async () => {
+    const { readFileSync } = await import("node:fs");
+    const config = readFileSync("next.config.ts", "utf8");
+    const rota = config.match(/tunnelRoute:\s*"([^"]+)"/)?.[1];
+    expect(rota).toBeTruthy();
+    expect(isPublicPath(rota!)).toBe(true);
+  });
 });

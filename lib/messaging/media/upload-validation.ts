@@ -69,6 +69,12 @@ export function validateOutboundMedia(mime: string, sizeBytes: number): Ok | Fai
     return { ok: false, code: "payload_too_large", message: "Arquivo acima de 50MB." };
   }
   const base = mime.split(";")[0]!.trim().toLowerCase();
+  // SVG é XML que o navegador executa (script, handlers): nunca é "imagem" aqui.
+  // O conteúdo é conferido pelos bytes em `conteudoBateComMime` (farejar.ts) —
+  // esta linha só recusa a declaração explícita antes de bufferizar o corpo.
+  if (base === "image/svg+xml") {
+    return { ok: false, code: "unsupported_media_type", message: "Tipo de arquivo não suportado." };
+  }
   if (base.startsWith("image/")) return { ok: true, kind: "image" };
   if (base.startsWith("video/")) return { ok: true, kind: "video" };
   if (base.startsWith("audio/")) return { ok: true, kind: "audio" };

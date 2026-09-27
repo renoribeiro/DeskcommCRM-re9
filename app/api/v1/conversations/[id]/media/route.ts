@@ -12,6 +12,7 @@ import { resolveAuthDual } from "@/lib/api/auth-dual";
 import { IDIOMA_PADRAO } from "@/lib/i18n/idiomas";
 import { extFromMime, MAX_MEDIA_BYTES } from "@/lib/messaging/media/types";
 import { validateOutboundMedia } from "@/lib/messaging/media/upload-validation";
+import { conteudoBateComMime } from "@/lib/messaging/media/farejar";
 import { transcodificarNotaDeVoz } from "@/lib/messaging/media/voice-transcode";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { traduzir } from "@/lib/i18n/dicionario";
@@ -85,6 +86,13 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<Response> {
   }
 
   const bruto = Buffer.from(await file.arrayBuffer());
+
+  // O `file.type` é do cliente. A família é decidida pelos BYTES, e a
+  // declaração só vale se bater: SVG/HTML/XML (marcação que o navegador
+  // executa), conteúdo não reconhecido e família trocada saem com 415.
+  if (!conteudoBateComMime(mime, bruto)) {
+    return fail("unsupported_media_type", t("Tipo de arquivo não suportado."), 415, { requestId });
+  }
 
   // Nota de voz gravada no browser sai em `webm` (o Chrome não grava ogg), e o
   // canal oficial recusa depois de aceitar — `131053 Media upload error`, que
