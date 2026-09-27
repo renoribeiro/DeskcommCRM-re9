@@ -117,12 +117,12 @@ RC="$(rodar 'segredo-simples')"
 check "sem SCHEDULER_APP_ORIGIN, chama http://app:3000 (como sempre)" \
   bash -c '[ "$(grep -c "\"http://app:3000/api/v1/cron/" "$1")" -eq "$(grep -c . "$1")" ]' _ "$TMP/crontab"
 : > "$TMP/crontab"
-env INTERNAL_SECRET=s SCHEDULER_APP_ORIGIN=http://imobcrm-app:3000 PATH="$TMP/bin:$PATH" \
+env INTERNAL_SECRET=s SCHEDULER_APP_ORIGIN=http://imobcrm-app:3000 PATH="$TMP/bin:$PATH" CRON_HEADER_DIR="$TMP/cabecalho" \
   CRONTAB_PATH="$TMP/crontab" sh "$ENTRYPOINT" >"$TMP/saida" 2>&1; RC=$?
 check "com SCHEDULER_APP_ORIGIN, toda linha usa a origem dada" \
   bash -c '[ "$1" -eq 0 ] && [ "$(grep -c "\"http://imobcrm-app:3000/api/v1/cron/" "$2")" -eq "$(grep -c . "$2")" ]' _ "$RC" "$TMP/crontab"
 : > "$TMP/crontab"
-env INTERNAL_SECRET=s SCHEDULER_APP_ORIGIN='http://x`whoami`:3000' PATH="$TMP/bin:$PATH" \
+env INTERNAL_SECRET=s SCHEDULER_APP_ORIGIN='http://x`whoami`:3000' PATH="$TMP/bin:$PATH" CRON_HEADER_DIR="$TMP/cabecalho" \
   CRONTAB_PATH="$TMP/crontab" sh "$ENTRYPOINT" >"$TMP/saida" 2>&1; RC=$?
 check "origem com metacaractere é recusada (ela entra entre aspas duplas no crontab)" \
   bash -c '[ "$1" -eq 1 ] && [ ! -s "$2" ] && grep -q SCHEDULER_APP_ORIGIN "$3"' _ "$RC" "$TMP/crontab" "$TMP/saida"
