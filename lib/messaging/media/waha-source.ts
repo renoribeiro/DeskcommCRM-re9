@@ -21,7 +21,8 @@ const FETCH_TIMEOUT_MS = 30_000;
 /**
  * O ÚNICO prefixo que o WAHA usa para servir anexo recebido
  * (`http://localhost:3000/api/files/<sessão>/<arquivo>`, medido no WAHA
- * 2026.7.x NOWEB — ver `tests/unit/waha-ingest-media.test.ts`).
+ * 2026.7.x NOWEB — ver `tests/unit/waha-ingest-media.test.ts`). O segmento da
+ * sessão é exigido: ver `caminhoDeArquivoDoWaha`.
  */
 const PREFIXO_DE_ARQUIVO = "/api/files/";
 
@@ -35,11 +36,23 @@ const SEGMENTO = /^[A-Za-z0-9_@.:+=-]{1,200}$/;
  * TODAS as organizações. Com o host reconstruído mas o caminho livre, uma
  * `media_url` gravada na linha (`…/api/sessions`, `…/api/<sessão-de-outra-org>/
  * chats`) virava proxy autenticado para qualquer endpoint dela. Agora só
- * sobrevive um caminho de arquivo — `/api/files/…` —, sem query, sem `..`, sem
- * `%` (que o servidor decodificaria depois desta conferência) e, quando o
- * caminho traz a sessão, a sessão tem de ser a da conexão desta mensagem.
+ * sobrevive um caminho de arquivo — `/api/files/<sessão>/<arquivo>` —, sem
+ * query, sem `..`, sem `%` (que o servidor decodificaria depois desta
+ * conferência), e a sessão do caminho tem de ser a da conexão desta mensagem.
  *
- * Devolve o caminho a buscar, ou `null` quando a URL não é um arquivo do WAHA.
+ * A sessão é OBRIGATÓRIA (revisão R11). A forma de um segmento só,
+ * `/api/files/<arquivo>`, era aceita "por via das dúvidas" e não tem origem
+ * medida: todo payload real capturado — WAHA 2026.7.x NOWEB em
+ * `webhook_events_log` (`tests/unit/waha-ingest-media.test.ts`) e a triagem
+ * `evidence/triagem-15set-l9/` — traz `/api/files/<sessão>/<arquivo>`. Aceitá-la
+ * pulava a única conferência de organização (a sessão), e o WAHA é
+ * compartilhado: o anexo de outra organização ficaria a um nome de arquivo de
+ * distância. Sem `sessionRef` a conferência não tem com o que comparar, e a
+ * resposta é recusar (os dois chamadores de produção — worker de persistência
+ * e `GET /messages/:id/media` — já não chamam sem ela).
+ *
+ * Devolve o caminho a buscar, ou `null` quando a URL não é um arquivo do WAHA
+ * da sessão desta conexão.
  */
 export function caminhoDeArquivoDoWaha(
   mediaUrl: string,
@@ -59,12 +72,12 @@ export function caminhoDeArquivoDoWaha(
   const { pathname } = advertised;
   if (!pathname.startsWith(PREFIXO_DE_ARQUIVO)) return null;
   const segmentos = pathname.slice(PREFIXO_DE_ARQUIVO.length).split("/");
-  if (segmentos.length < 1 || segmentos.length > 2) return null;
+  if (segmentos.length !== 2) return null;
   if (!segmentos.every((seg) => SEGMENTO.test(seg) && seg !== "." && seg !== "..")) return null;
   // `/api/files/<sessão>/<arquivo>`: a sessão do caminho é a desta conexão.
   // Sem isso, o anexo de outra organização (outra sessão no MESMO WAHA)
   // seria servido a quem conhecesse o nome do arquivo.
-  if (segmentos.length === 2 && sessionRef && segmentos[0] !== sessionRef) return null;
+  if (!sessionRef || segmentos[0] !== sessionRef) return null;
   return pathname;
 }
 
