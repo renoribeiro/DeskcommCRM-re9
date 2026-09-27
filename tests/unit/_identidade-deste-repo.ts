@@ -46,7 +46,14 @@
  * reprova lá. Não remova essa derivação pensando que é redundante — ela é o que
  * torna a âncora não-falsificável de dentro do diff.
  */
-export const NAMESPACE_DESTE_REPO = "ghcr.io/melgarafael";
+export const NAMESPACE_DESTE_REPO = "ghcr.io/renoribeiro";
+
+/**
+ * O NOME do repositório no GitHub. Fica ao lado da âncora porque um fork pode
+ * mudá-lo (este se chama `DeskcommCRM-re9`), e a URL que o kit clona é derivada
+ * dos dois — dono e nome — em `namespace-das-imagens.test.ts`.
+ */
+export const NOME_DESTE_REPO = "DeskcommCRM-re9";
 
 /**
  * O dono de uma referência `<registry>/<dono>`.

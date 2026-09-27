@@ -220,6 +220,13 @@ unset _deskcomm_chamador
 # o override subiria o Caddy e ele iria bater de frente com o proxy da hospedagem.
 dc() {
   if [ "${SINGLE_SERVER:-0}" = "1" ]; then
+    # Single-server atrás do Traefik da hospedagem (Dokploy, Coolify…): o
+    # override do Traefik desliga o Caddy e publica o app por labels; o do
+    # single-server liga o app à rede privada do Supabase. Os dois somam.
+    if [ "${REVERSE_PROXY:-caddy}" = "traefik" ]; then
+      docker compose -f "$COMPOSE" -f docker-compose.single-server.yml -f "$COMPOSE_TRAEFIK" "$@"
+      return
+    fi
     docker compose -f "$COMPOSE" -f docker-compose.single-server.yml "$@"
     return
   fi
@@ -235,6 +242,10 @@ dc() {
 # próprio dono derrubaria o site seguindo a instrução do kit.
 dc_files() {
   if [ "${SINGLE_SERVER:-0}" = "1" ]; then
+    if [ "${REVERSE_PROXY:-caddy}" = "traefik" ]; then
+      printf -- '-f %s -f %s -f %s' "$COMPOSE" docker-compose.single-server.yml "$COMPOSE_TRAEFIK"
+      return
+    fi
     printf -- '-f %s -f %s' "$COMPOSE" docker-compose.single-server.yml
     return
   fi
@@ -386,6 +397,34 @@ sincronizar_signup_mode_do_gotrue() {
   return 0
 }
 
+# ── Por onde o Supabase single-server é publicado ────────────────────────────
+#
+# Com Caddy (o padrão), o Caddyfile.single-server já manda as APIs públicas do
+# Supabase para o Envoy. Com o Traefik da hospedagem (Dokploy, Coolify…), quem
+# faz esse papel é o `supabase-single-server.traefik.yml`, que entra no
+# COMPOSE_FILE do Supabase e recebe no .env dele a rede, o entrypoint e o
+# certresolver que o install.sh descobriu para o CRM — a mesma resposta, para
+# o app e para o Supabase aparecerem no mesmo Traefik.
+#
+# Idempotente e nos dois sentidos: voltar para Caddy tira o arquivo e a entrada
+# do COMPOSE_FILE. Lê REVERSE_PROXY e TRAEFIK_* do ambiente (o .env do CRM
+# carregado por quem chama).
+aplicar_proxy_do_supabase_single_server() {
+  local dir env_sb arquivos="docker-compose.yml:docker-compose.deskcomm.yml"
+  dir="$(dir_do_supabase)"; env_sb="$dir/.env"
+  [ -f "$env_sb" ] || return 1
+  if [ "${REVERSE_PROXY:-caddy}" = "traefik" ]; then
+    cp "$KIT_DIR/supabase-single-server.traefik.yml" "$dir/docker-compose.deskcomm-traefik.yml" || return 1
+    arquivos="$arquivos:docker-compose.deskcomm-traefik.yml"
+    set_env_var "$env_sb" TRAEFIK_NETWORK "$(valor_compose "${TRAEFIK_NETWORK:-traefik}")"
+    set_env_var "$env_sb" TRAEFIK_ENTRYPOINT "$(valor_compose "${TRAEFIK_ENTRYPOINT:-websecure}")"
+    set_env_var "$env_sb" TRAEFIK_CERTRESOLVER "$(valor_compose "${TRAEFIK_CERTRESOLVER:-letsencrypt}")"
+  else
+    rm -f "$dir/docker-compose.deskcomm-traefik.yml"
+  fi
+  set_env_var "$env_sb" COMPOSE_FILE "$arquivos"
+}
+
 # ── O update.sh leva o Supabase até a versão pinada ──────────────────────────
 #
 # O `update.sh` oficial do Supabase faz o merge de três vias dos arquivos dele
@@ -397,6 +436,7 @@ atualizar_supabase_single_server() {
   dir="$(dir_do_supabase)"
   [ -f "$dir/.env" ] || { c_red "⛔ $(t "Modo single-server sem {1}/.env — rode install-single-server.sh." "$dir")"; return 1; }
   cp "$KIT_DIR/supabase-single-server.override.yml" "$dir/docker-compose.deskcomm.yml" || return 1
+  aplicar_proxy_do_supabase_single_server || return 1
   set_env_var "$dir/.env" COMPOSE_PROJECT_NAME "$(projeto_do_supabase)"
   atual="$(sed -n 's/^ref=//p' "$dir/.supabase-version" 2>/dev/null | tail -1)"
   if [ "$atual" != "$SUPABASE_REF" ]; then
@@ -1268,7 +1308,7 @@ ler_rodada_do_banco() {
 # `publish-image.yml` digam o mesmo. Se você é um fork, é lá que está a lista do
 # que trocar junto — e, desde 18/09/2026, o CI do SEU fork não cobra este valor:
 # a asserção só vale quando o dono do runner é o dono deste repositório.
-IMG_NS="ghcr.io/melgarafael"
+IMG_NS="ghcr.io/renoribeiro"
 IMG_APP="${IMG_NS}/deskcommcrm"
 IMG_WORKER="${IMG_NS}/deskcomm-worker"
 IMG_SCHEDULER="${IMG_NS}/deskcomm-scheduler"
@@ -1288,7 +1328,7 @@ IMG_VOICE_AGENT="${IMG_NS}/deskcomm-voice-agent"
 # alguém porque não deu para resolver um número de versão seria trocar um
 # problema de previsibilidade por um de disponibilidade.
 ultima_versao_publicada() {
-  local url="${1:-https://github.com/melgarafael/DeskcommCRM.git}" ref
+  local url="${1:-https://github.com/renoribeiro/DeskcommCRM-re9.git}" ref
   command -v git >/dev/null 2>&1 || return 0
   # `grep -v -- -` descarta PRERELEASE (v1.11.0-rc1, v1.1.1-jmpo.1 — esta última
   # existe de verdade neste repo). O `--sort=-v:refname` do git põe o prerelease

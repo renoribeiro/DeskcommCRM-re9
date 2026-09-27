@@ -15,7 +15,7 @@ set -euo pipefail
 # de qualquer 'cd' (step 2 pode entrar num repo clonado à parte).
 KIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
-REPO_URL="${REPO_URL:-https://github.com/melgarafael/DeskcommCRM.git}"
+REPO_URL="${REPO_URL:-https://github.com/renoribeiro/DeskcommCRM-re9.git}"
 # Uma constante, dois usos (o fim feliz e o fim travado) — e o comecar.sh tem a
 # gêmea. Link repetido à mão vira link divergente na primeira troca.
 COMUNIDADE_URL="https://lp-comunidade.automatiklabs.com.br"
@@ -36,6 +36,13 @@ source "$KIT_DIR/_i18n.sh"
 # numa, mexa na outra.
 dc() {
   if [ "${SINGLE_SERVER:-0}" = "1" ]; then
+    # Single-server atrás do Traefik da hospedagem (Dokploy, Coolify…): o
+    # override do Traefik desliga o Caddy e publica o app por labels; o do
+    # single-server liga o app à rede privada do Supabase. Os dois somam.
+    if [ "${REVERSE_PROXY:-caddy}" = "traefik" ]; then
+      docker compose -f "$COMPOSE" -f docker-compose.single-server.yml -f "$COMPOSE_TRAEFIK" "$@"
+      return
+    fi
     docker compose -f "$COMPOSE" -f docker-compose.single-server.yml "$@"
     return
   fi
@@ -47,6 +54,10 @@ dc() {
 }
 dc_files() {
   if [ "${SINGLE_SERVER:-0}" = "1" ]; then
+    if [ "${REVERSE_PROXY:-caddy}" = "traefik" ]; then
+      printf -- '-f %s -f %s -f %s' "$COMPOSE" docker-compose.single-server.yml "$COMPOSE_TRAEFIK"
+      return
+    fi
     printf -- '-f %s -f %s' "$COMPOSE" docker-compose.single-server.yml
     return
   fi

@@ -41,6 +41,13 @@ check "Studio nao e publicado pelo Caddy" bash -c '! grep -q "/studio" "$1"' _ "
 check "Compose conecta Caddy a rede privada" grep -q 'supabase_private' "$ROOT_DIR/docker-compose.single-server.yml"
 check "dominio resolve internamente para o Caddy" grep -q -- '- ${DOMAIN}' "$ROOT_DIR/docker-compose.single-server.yml"
 check "gateway Supabase escuta apenas em loopback" grep -q '127.0.0.1:${API_GW_HTTP_PORT' "$ROOT_DIR/hostgator-setup-kit/supabase-single-server.override.yml"
+check "instalador nao forca o Caddy (o install.sh detecta o Traefik da VPS)" \
+  bash -c '! grep -qE "REVERSE_PROXY caddy" "$1"' _ "$INSTALLER"
+check "atras do Traefik, as APIs do Supabase saem pelo mesmo proxy" \
+  grep -q 'aplicar_proxy_do_supabase_single_server' "$INSTALLER"
+check "o override do Traefik publica so o gateway do Supabase" \
+  grep -q '^  api-gw:$' "$ROOT_DIR/hostgator-setup-kit/supabase-single-server.traefik.yml"
+check "o nome da marca e semente configuravel, nao cravado" grep -qF 'APP_NAME "${APP_NAME:-' "$INSTALLER"
 check "Postgres Supabase nao publica porta no host" bash -c '! grep -q "POSTGRES_PORT" "$1"' _ "$OVERRIDE"
 
 # (a) Nomes. Os 11 servicos do docker-compose.yml de self-hosted/v0.8.1; um

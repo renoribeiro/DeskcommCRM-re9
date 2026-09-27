@@ -1,0 +1,479 @@
+# DeskcommCRM / ImobCRM no DOKPLOY — tudo numa VPS: Supabase + CRM, atrás do
+# Traefik do próprio Dokploy.
+#
+# COMO USAR (passo a passo em docs/imobiliario/03-instalacao-vps-dokploy.md)
+# -------------------------------------------------------------------------
+#   1. No seu computador (ou no terminal da VPS), gere as variáveis:
+#        bash infra/dokploy/gerar-env.sh --dominio crm.suaempresa.com.br --email voce@suaempresa.com.br --versao X.Y.Z
+#   2. Dokploy › Create Service › Compose › Provider "Git" (ou GitHub):
+#        repositório deste projeto, branch `main`, Compose Path `./docker-compose.dokploy.yml`.
+#   3. Aba Environment: cole o bloco gerado no passo 1. Deploy.
+#   4. NÃO use a aba Domains do Dokploy para este serviço: as rotas já estão nas
+#      labels abaixo (o CRM e as APIs do Supabase dividem o MESMO domínio, por caminho).
+#
+# O QUE SOBE
+# ----------
+#   Supabase: db, auth, rest, realtime, storage, imgproxy e o gateway (api-gw).
+#     Fora de propósito: studio, meta, functions, analytics e supavisor — o CRM
+#     não usa, e cada um custa memória numa VPS de 8 GB.
+#   CRM: setup (roda e sai), app, worker, scheduler, waha, redis, srh.
+#
+# O QUE É PUBLICADO
+# -----------------
+#   Nenhuma porta no host. Só dois contêineres entram na rede do Traefik
+#   (dokploy-network): o `app` (o domínio inteiro) e o `api-gw` (os caminhos
+#   /auth/v1, /rest/v1, /realtime/v1, /storage/v1, /functions/v1 e /graphql/v1,
+#   com prioridade maior). Postgres, Redis e WAHA ficam só na rede privada.
+#
+# DADOS
+# -----
+#   Volumes NOMEADOS (db-data, storage-data, waha-*): o Dokploy re-clona o
+#   código a cada deploy, então nada que precisa sobreviver mora em pasta do
+#   repositório. Faça backup de db-data e storage-data (docs/imobiliario/03-…).
+#
+# Os arquivos do Supabase em infra/dokploy/supabase/ são cópia fixa da versão
+# oficial self-hosted/v0.8.1 (a mesma do kit). Gate: tests/shell/dokploy-compose.test.sh.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-crm-env: &crm-env
+  NODE_ENV: production
+  APP_NAME: ${APP_NAME:-DeskcommCRM}
+  SIGNUP_MODE: ${SIGNUP_MODE:-aberto}
+  NEXT_PUBLIC_APP_URL: https://${DOMAIN:?defina DOMAIN}
+  NEXT_PUBLIC_ADMIN_URL: https://${DOMAIN}
+  NEXT_PUBLIC_SUPABASE_URL: https://${DOMAIN}
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY:?defina ANON_KEY}
+  SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:?defina SERVICE_ROLE_KEY}
+  SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}@db:5432/postgres
+  SUPABASE_DB_ADMIN_URL: ""
+  INTERNAL_SECRET: ${INTERNAL_SECRET:?defina INTERNAL_SECRET}
+  INTERNAL_CRON_SECRET: ${INTERNAL_CRON_SECRET:?defina INTERNAL_CRON_SECRET}
+  NUVEMSHOP_OAUTH_ENCRYPTION_KEY: ${NUVEMSHOP_OAUTH_ENCRYPTION_KEY:?defina NUVEMSHOP_OAUTH_ENCRYPTION_KEY}
+  NUVEMSHOP_ENABLED: "false"
+  CPF_ENCRYPTION_KEY: ${CPF_ENCRYPTION_KEY:?defina CPF_ENCRYPTION_KEY}
+  AI_CRED_AES_KEY: ${AI_CRED_AES_KEY:?defina AI_CRED_AES_KEY}
+  WAHA_BYO_ENCRYPTION_KEY: ${WAHA_BYO_ENCRYPTION_KEY:?defina WAHA_BYO_ENCRYPTION_KEY}
+  IMPERSONATE_COOKIE_SECRET: ${IMPERSONATE_COOKIE_SECRET:?defina IMPERSONATE_COOKIE_SECRET}
+  LGPD_SIGNING_KEY: ${LGPD_SIGNING_KEY:?defina LGPD_SIGNING_KEY}
+  WAHA_API_BASE_URL: http://waha:3000
+  WAHA_WEBHOOK_BASE_URL: http://app:3000
+  WAHA_API_KEY: ${WAHA_API_KEY:?defina WAHA_API_KEY}
+  WAHA_HMAC_SECRET: ${WAHA_HMAC_SECRET:?defina WAHA_HMAC_SECRET}
+  UPSTASH_REDIS_REST_URL: http://srh:80
+  UPSTASH_REDIS_REST_TOKEN: ${SRH_TOKEN:?defina SRH_TOKEN}
+  AGENT_DISPATCH_CONSUMER: engine
+  INTERNAL_AGENT_RUN_STUB: "false"
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+  SMTP_FROM_NAME: ${SMTP_FROM_NAME:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  SENTRY_DSN: ${SENTRY_DSN:-off}
+
+services:
+  # ══════════════════════════════ SUPABASE ══════════════════════════════════
+  db:
+    image: supabase/postgres:17.6.1.136
+    restart: unless-stopped
+    volumes:
+      - ./infra/dokploy/supabase/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
+      - ./infra/dokploy/supabase/db/webhooks.sql:/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql:ro
+      - ./infra/dokploy/supabase/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+      - ./infra/dokploy/supabase/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
+      - ./infra/dokploy/supabase/db/_supabase.sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql:ro
+      - ./infra/dokploy/supabase/db/logs.sql:/docker-entrypoint-initdb.d/migrations/99-logs.sql:ro
+      - ./infra/dokploy/supabase/db/pooler.sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql:ro
+      - db-data:/var/lib/postgresql/data
+      - db-config:/etc/postgresql-custom
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: 5432
+      POSTGRES_PORT: 5432
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: postgres
+      POSTGRES_DB: postgres
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET}
+      JWT_EXP: 3600
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal"]
+    logging: *default-logging
+
+  auth:
+    image: supabase/gotrue:v2.196.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: https://${DOMAIN}/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      GOTRUE_SITE_URL: https://${DOMAIN}
+      GOTRUE_URI_ALLOW_LIST: https://${DOMAIN}/auth/confirm,https://${DOMAIN}/**
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_ISSUER: https://${DOMAIN}/auth/v1
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+      # Confirmação de e-mail LIGADA, como no kit: sem ela qualquer um cria conta
+      # com e-mail que não é dele.
+      GOTRUE_MAILER_AUTOCONFIRM: "false"
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_FROM_EMAIL:-}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${SMTP_USERNAME:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASSWORD:-}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_FROM_NAME:-}
+      GOTRUE_MAILER_URLPATHS_INVITE: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/v1/verify
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_SMS_AUTOCONFIRM: "false"
+    logging: *default-logging
+
+  rest:
+    image: postgrest/postgrest:v14.17
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "postgrest", "--ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/postgres
+      PGRST_DB_SCHEMAS: public,storage,graphql_public
+      PGRST_DB_MAX_ROWS: 1000
+      PGRST_DB_EXTRA_SEARCH_PATH: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_ADMIN_SERVER_PORT: 3001
+      PGRST_ADMIN_SERVER_HOST: localhost
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
+      PGRST_APP_SETTINGS_JWT_EXP: 3600
+    command: ["postgrest"]
+    logging: *default-logging
+
+  realtime:
+    image: supabase/realtime:v2.134.10
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      default:
+        # O gateway chama o Realtime por este nome, e é dele que o Realtime tira
+        # o tenant (`realtime-dev`) — igual ao compose oficial.
+        aliases: [realtime-dev.supabase-realtime]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sSfL --head -o /dev/null -H \"Authorization: Bearer ${ANON_KEY}\" http://localhost:4000/api/tenants/realtime-dev/health"]
+      timeout: 5s
+      interval: 30s
+      retries: 3
+      start_period: 10s
+    environment:
+      PORT: 4000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: postgres
+      DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime"
+      DB_ENC_KEY: supabaserealtime
+      API_JWT_SECRET: ${JWT_SECRET}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?defina SECRET_KEY_BASE}
+      METRICS_JWT_SECRET: ${JWT_SECRET}
+      ERL_AFLAGS: -proto_dist inet_tcp
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+      RUN_JANITOR: "true"
+      DISABLE_HEALTHCHECK_LOGGING: "true"
+    logging: *default-logging
+
+  storage:
+    image: supabase/storage-api:v1.74.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      imgproxy:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://storage:5000/status"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+      start_period: 10s
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      STORAGE_PUBLIC_URL: https://${DOMAIN}
+      REQUEST_ALLOW_X_FORWARDED_PATH: "true"
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      GLOBAL_S3_BUCKET: stub
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      ENABLE_IMAGE_TRANSFORMATION: "true"
+      IMGPROXY_URL: http://imgproxy:5001
+    volumes:
+      - storage-data:/var/lib/storage
+    logging: *default-logging
+
+  imgproxy:
+    image: darthsim/imgproxy:v3.31.4
+    restart: unless-stopped
+    volumes:
+      - storage-data:/var/lib/storage
+    healthcheck:
+      test: ["CMD", "imgproxy", "health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      IMGPROXY_BIND: ":5001"
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
+      IMGPROXY_USE_ETAG: "true"
+      IMGPROXY_AUTO_WEBP: "true"
+      IMGPROXY_MAX_SRC_RESOLUTION: 16.8
+    logging: *default-logging
+
+  api-gw:
+    image: envoyproxy/envoy:v1.39.1
+    restart: unless-stopped
+    depends_on:
+      auth:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      storage:
+        condition: service_started
+    networks:
+      default:
+        aliases: [envoy, kong]
+      dokploy:
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/8000'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - ./infra/dokploy/supabase/api/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./infra/dokploy/supabase/api/envoy/cds.yaml:/etc/envoy/cds.yaml:ro
+      - ./infra/dokploy/supabase/api/envoy/lds.template.yaml:/etc/envoy/lds.template.yaml:ro
+      - ./infra/dokploy/supabase/api/envoy/docker-entrypoint.sh:/docker-entrypoint.sh:ro
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      SUPABASE_PUBLISHABLE_KEY: ""
+      SUPABASE_SECRET_KEY: ""
+      ANON_KEY_ASYMMETRIC: ""
+      SERVICE_ROLE_KEY_ASYMMETRIC: ""
+      SUPABASE_PUBLIC_URL: https://${DOMAIN}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-supabase}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?defina DASHBOARD_PASSWORD}
+    entrypoint: ["/bin/sh", "/docker-entrypoint.sh"]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "${TRAEFIK_NETWORK:-dokploy-network}"
+      traefik.http.routers.imob-supabase.rule: "Host(`${DOMAIN}`) && (PathPrefix(`/auth/v1`) || PathPrefix(`/rest/v1`) || PathPrefix(`/realtime/v1`) || PathPrefix(`/storage/v1`) || PathPrefix(`/functions/v1`) || PathPrefix(`/graphql/v1`))"
+      traefik.http.routers.imob-supabase.entrypoints: "${TRAEFIK_ENTRYPOINT:-websecure}"
+      traefik.http.routers.imob-supabase.tls.certresolver: "${TRAEFIK_CERTRESOLVER:-letsencrypt}"
+      traefik.http.routers.imob-supabase.priority: "900"
+      traefik.http.routers.imob-supabase.service: "imob-supabase"
+      traefik.http.services.imob-supabase.loadbalancer.server.port: "8000"
+    logging: *default-logging
+
+  # ════════════════════════════════ CRM ═════════════════════════════════════
+  # Roda a cada deploy e sai: schema (baseline.sql) e primeiro administrador.
+  setup:
+    image: postgres:17-alpine
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/primeira-instalacao.sh"]
+    volumes:
+      - ./infra/dokploy/primeira-instalacao.sh:/primeira-instalacao.sh:ro
+      - ./supabase/baseline.sql:/baseline.sql:ro
+    environment:
+      DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+      AUTH_URL: http://auth:9999
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      OWNER_EMAIL: ${OWNER_EMAIL:?defina OWNER_EMAIL}
+      OWNER_PASSWORD: ${OWNER_PASSWORD:?defina OWNER_PASSWORD}
+      APP_LOCALE: ${APP_LOCALE:-pt-BR}
+      NUVEMSHOP_OAUTH_ENCRYPTION_KEY: ${NUVEMSHOP_OAUTH_ENCRYPTION_KEY}
+    logging: *default-logging
+
+  app:
+    image: ghcr.io/renoribeiro/deskcommcrm:${IMAGE_TAG:-stable}
+    pull_policy: always
+    restart: unless-stopped
+    mem_limit: 768m
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      srh:
+        condition: service_started
+      waha:
+        condition: service_started
+    environment:
+      <<: *crm-env
+    networks:
+      default: {}
+      dokploy:
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "${TRAEFIK_NETWORK:-dokploy-network}"
+      traefik.http.routers.imob.rule: "Host(`${DOMAIN}`)"
+      traefik.http.routers.imob.entrypoints: "${TRAEFIK_ENTRYPOINT:-websecure}"
+      traefik.http.routers.imob.tls.certresolver: "${TRAEFIK_CERTRESOLVER:-letsencrypt}"
+      traefik.http.routers.imob.middlewares: "imob-compress"
+      traefik.http.routers.imob.service: "imob"
+      traefik.http.services.imob.loadbalancer.server.port: "3000"
+      traefik.http.middlewares.imob-compress.compress: "true"
+      # O webhook GLOBAL do WAHA só pode ser chamado de dentro (o WAHA fala com
+      # http://app:3000). Por fora ele é negado — o mesmo que o Caddyfile faz.
+      traefik.http.routers.imob-waha-block.rule: "Host(`${DOMAIN}`) && Path(`/api/v1/webhooks/waha`)"
+      traefik.http.routers.imob-waha-block.entrypoints: "${TRAEFIK_ENTRYPOINT:-websecure}"
+      traefik.http.routers.imob-waha-block.tls.certresolver: "${TRAEFIK_CERTRESOLVER:-letsencrypt}"
+      traefik.http.routers.imob-waha-block.priority: "1000"
+      traefik.http.routers.imob-waha-block.service: "imob"
+      traefik.http.routers.imob-waha-block.middlewares: "imob-deny"
+      traefik.http.middlewares.imob-deny.ipallowlist.sourcerange: "192.0.2.1/32"
+      traefik.http.routers.imob-http.rule: "Host(`${DOMAIN}`)"
+      traefik.http.routers.imob-http.entrypoints: "${TRAEFIK_ENTRYPOINT_HTTP:-web}"
+      traefik.http.routers.imob-http.middlewares: "imob-https"
+      traefik.http.routers.imob-http.service: "imob"
+      traefik.http.middlewares.imob-https.redirectscheme.scheme: "https"
+      traefik.http.middlewares.imob-https.redirectscheme.permanent: "true"
+    logging: *default-logging
+
+  worker:
+    image: ghcr.io/renoribeiro/deskcomm-worker:${IMAGE_TAG:-stable}
+    pull_policy: always
+    restart: unless-stopped
+    mem_limit: 512m
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    environment:
+      <<: *crm-env
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8787/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging
+
+  scheduler:
+    image: ghcr.io/renoribeiro/deskcomm-scheduler:${IMAGE_TAG:-stable}
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      TZ: UTC
+      INTERNAL_SECRET: ${INTERNAL_SECRET}
+    logging: *default-logging
+
+  waha:
+    image: devlikeapro/waha:latest-2026.7.2
+    restart: unless-stopped
+    mem_limit: 1280m
+    environment:
+      WAHA_API_KEY: "sha512:${WAHA_API_KEY_SHA512:?defina WAHA_API_KEY_SHA512}"
+      WHATSAPP_HOOK_URL: http://app:3000/api/v1/webhooks/waha
+      WHATSAPP_HOOK_EVENTS: "message.any,message.ack,message.edited,message.revoked,session.status,state.change"
+      WHATSAPP_HOOK_HMAC: ${WAHA_HMAC_SECRET}
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WAHA_DASHBOARD_ENABLED: "false"
+      WHATSAPP_RESTART_ALL_SESSIONS: "True"
+    volumes:
+      - waha-data:/app/.sessions
+      - waha-media:/app/.media
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    logging: *default-logging
+
+  srh:
+    image: hiett/serverless-redis-http@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150
+    restart: unless-stopped
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: ${SRH_TOKEN}
+      SRH_CONNECTION_STRING: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    logging: *default-logging
+
+networks:
+  dokploy:
+    external: true
+    name: ${TRAEFIK_NETWORK:-dokploy-network}
+
+volumes:
+  db-data:
+  db-config:
+  storage-data:
+  waha-data:
+  waha-media:
