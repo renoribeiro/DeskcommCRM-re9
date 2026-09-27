@@ -8,6 +8,7 @@
  */
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as ModuloAuth from "@/lib/mcp/auth";
 
 const logSpy = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/logger", () => ({
@@ -15,7 +16,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 const validar = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/mcp/auth", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@/lib/mcp/auth")>();
+  const real = await importOriginal<typeof ModuloAuth>();
   return { ...real, validateBearerToken: validar };
 });
 

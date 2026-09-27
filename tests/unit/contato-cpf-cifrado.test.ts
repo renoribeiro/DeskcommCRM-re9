@@ -10,10 +10,11 @@
  * o insert gravou — ida e volta pelo formato `\x<hex>` do PostgREST.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type * as ModuloEnv from "@/lib/env";
 
 const estado = vi.hoisted(() => ({ chave: "" }));
 vi.mock("@/lib/env", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@/lib/env")>();
+  const real = await importOriginal<typeof ModuloEnv>();
   return {
     env: new Proxy(real.env, {
       get: (alvo, prop) =>

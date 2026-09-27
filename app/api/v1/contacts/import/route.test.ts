@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type * as ModuloEnv from "@/lib/env";
 
 import { audit } from "@/lib/audit";
 import { requireRole } from "@/lib/auth/require-role";
@@ -15,7 +16,7 @@ import { POST } from "./route";
 // apagada no caso que prova a recusa sem ela.
 const chaveCpf = vi.hoisted(() => ({ valor: "q5o1kB7sI0Qm0l3yVt2t8xJQv2cS8m9eZ0vKqRk3o8Y=" }));
 vi.mock("@/lib/env", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@/lib/env")>();
+  const real = await importOriginal<typeof ModuloEnv>();
   return {
     env: new Proxy(real.env, {
       get: (alvo, prop) =>
