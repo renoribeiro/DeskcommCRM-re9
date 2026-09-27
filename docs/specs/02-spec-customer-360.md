@@ -52,7 +52,7 @@ A Spec 02 materializa o **núcleo gravitacional** do DeskcommCRM: as 5 tabelas c
 
 ### 2.1 Tabela `contacts`
 
-Fonte canônica de identidade de pessoa física no escopo de um tenant. CPF criptografado at-rest via `pgcrypto` (regra L-07).
+Fonte canônica de identidade de pessoa física no escopo de um tenant. CPF criptografado at-rest **no servidor Node** (AES-256-GCM, regra L-07) — ver "CPF: como está implementado" logo abaixo do SQL; o `pgcrypto`/`decrypt_cpf` desta seção é o desenho original e **não** é o que roda.
 
 ```sql
 -- Pré-requisitos (já habilitados pela Spec 01):
@@ -69,8 +69,8 @@ create table public.contacts (
   email                    text,
   email_normalized         text generated always as (lower(trim(email))) stored,
   phone_number             text,                 -- E.164: ^\+\d{8,15}$
-  cpf_encrypted            bytea,                -- pgp_sym_encrypt(cpf_digits, key)
-  cpf_hash                 text,                 -- sha256(cpf_digits) p/ matching sem decrypt
+  cpf_encrypted            bytea,                -- AES-256-GCM no Node: 0x01 ‖ iv ‖ tag ‖ cifra (lib/contacts/cpf.ts)
+  cpf_hash                 text,                 -- HMAC-SHA256(chave derivada, cpf) p/ matching sem decrypt
   birthdate                date,
 
   -- Estado
@@ -113,10 +113,10 @@ create table public.contacts (
     check (is_anonymized = false or (is_anonymized = true and anonymized_at is not null))
 );
 
-comment on table  public.contacts                is 'Pessoa física no escopo de um tenant. CPF criptografado at-rest (pgcrypto). is_anonymized é irreversível (regra L-04).';
+comment on table  public.contacts                is 'Pessoa física no escopo de um tenant. CPF criptografado at-rest (AES-256-GCM no servidor). is_anonymized é irreversível (regra L-04).';
 comment on column public.contacts.email_normalized is 'Coluna gerada (lower+trim) usada por todo matching e unique constraint.';
-comment on column public.contacts.cpf_encrypted   is 'Bytea com pgp_sym_encrypt(digits, current_setting(''app.cpf_key'')). Acesso via decrypt_cpf().';
-comment on column public.contacts.cpf_hash        is 'SHA256 hex dos 11 dígitos. Único por tenant. Permite match sem decrypt.';
+comment on column public.contacts.cpf_encrypted   is 'AES-256-GCM feito no servidor Node (lib/contacts/cpf.ts): 0x01 || iv || tag || cifra. O banco não decifra.';
+comment on column public.contacts.cpf_hash        is 'HMAC-SHA256 (chave derivada da CPF_ENCRYPTION_KEY) do CPF normalizado. Único por tenant. Permite match sem decrypt.';
 comment on column public.contacts.is_merged_into  is 'Tombstone de merge (§5.4). NULL = contact ativo. NOT NULL = perdedor de merge, redireciona p/ primary.';
 comment on column public.contacts.last_activity_at is 'Denormalizado pela trigger fn_update_last_activity_at em insert de crm_lead_activities.';
 
@@ -156,7 +156,16 @@ create trigger trg_contacts_updated_at
   for each row execute function public.fn_set_updated_at();
 ```
 
-**Helper `decrypt_cpf`:**
+**CPF: como está implementado (vale sobre o desenho abaixo).**
+
+- Cifra e hash moram em `lib/contacts/cpf.ts`, no servidor Node; o banco só guarda. As RPCs `encrypt_cpf`/`decrypt_cpf` nunca existiram no schema.
+- `CPF_ENCRYPTION_KEY` é o material; **HKDF-SHA256** deriva duas chaves com rótulos distintos — uma de **AES-256-GCM** (`cpf_encrypted`) e outra de **HMAC-SHA256** (`cpf_hash`). O SHA-256 puro do desenho original era enumerável (10^9 CPFs válidos); com HMAC, quem lê o banco sem a chave não enumera.
+- Blob de `cpf_encrypted`: `0x01 ‖ iv(12) ‖ tag(16) ‖ cifra`. O primeiro byte é a **versão** do formato — não é id de chave.
+- Leitura em claro: só `GET /api/v1/contacts/[id]` com `decrypt_purpose`, papel `manager`+, auditada. MCP e listagens nunca devolvem o CPF.
+- Sem chave: nenhuma escrita de CPF (503 `cpf_encryption_unavailable`); o CHECK `contacts_cpf_consistency` impede gravar só o hash.
+- **Limitação: não há rotação de chave.** O blob não identifica a chave e o hash depende dela, então trocar a `CPF_ENCRYPTION_KEY` deixa ilegíveis os CPFs gravados e quebra busca e deduplicação por CPF. Uma rotação exigiria: aceitar a chave anterior junto da nova e uma versão de blob com id de chave; regravar `cpf_encrypted` e `cpf_hash` juntos, em lotes, com a nova; buscar pelos dois hashes durante a janela; retirar a anterior só com zero linhas antigas. Procedimento completo em L-07 (`docs/business-rules/00-business-rules-catalog.md`).
+
+**Helper `decrypt_cpf` (desenho original — NÃO implementado; ver acima):**
 
 ```sql
 create or replace function public.decrypt_cpf(p_contact_id uuid)
