@@ -17,6 +17,7 @@ import { ApiError } from "@/lib/api/types";
 import { ok, fail } from "@/lib/api/wrappers";
 import { requireRole } from "@/lib/auth/require-role";
 import { encerraDemanda } from "@/lib/leads/encerramento";
+import { winLeadSchema } from "@/lib/schemas/leads";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -39,11 +40,17 @@ export async function POST(
   // O MOTIVO DE GANHO (issue #1536): corpo opcional. Body vazio/ausente é o
   // contrato antigo — ganhar sem motivo continua valendo, salvo quando o funil
   // liga `settings.won_reason_required` (aí a recusa vem de `encerraDemanda`).
-  const corpo = await req.json().catch(() => ({}));
-  const wonReason =
-    typeof (corpo as { won_reason?: unknown }).won_reason === "string"
-      ? ((corpo as { won_reason: string }).won_reason as string)
-      : null;
+  // Zod com teto (auditoria P10); o corpo vazio/ausente/não-JSON continua
+  // sendo o contrato antigo (`{}`).
+  const corpo = (await req.json().catch(() => null)) ?? {};
+  const parsed = winLeadSchema.safeParse(corpo);
+  if (!parsed.success) {
+    return fail("validation_failed", "won_reason inválido (texto de até 500 caracteres).", 422, {
+      requestId,
+      details: { issues: parsed.error.issues },
+    });
+  }
+  const wonReason = parsed.data.won_reason ?? null;
 
   try {
     const { lead } = await encerraDemanda(

@@ -69,7 +69,15 @@ export const cloneLeadSchema = z.object({
 });
 export type CloneLeadInput = z.infer<typeof cloneLeadSchema>;
 
-export const winLeadSchema = z.object({}).passthrough();
+/**
+ * Corpo OPCIONAL do /win (auditoria P10): era `passthrough()` e a rota lia o
+ * campo à mão, sem teto. `won_reason` tem o mesmo limite do `moveLeadSchema`
+ * (500); vazio/ausente segue sendo "ganhar sem motivo" — quem decide se o motivo
+ * é obrigatório é o funil (`lib/leads/encerramento.ts`).
+ */
+export const winLeadSchema = z.object({
+  won_reason: z.string().max(500).nullable().optional(),
+});
 export type WinLeadInput = z.infer<typeof winLeadSchema>;
 
 /**
