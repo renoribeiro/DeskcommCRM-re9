@@ -211,3 +211,26 @@ funcionava deixa de funcionar; a nota pública explica o caminho certo.
 
 ## 5. Resultado
 
+Bateria completa rodada sobre o código final (commit da 3ª rodada), com o banco de teste
+reconstruído do `baseline.sql`:
+
+| Verificação | Resultado |
+|---|---|
+| Invariantes de banco (Postgres 16 + pgvector; RLS, isolamento entre organizações, baseline em modo instalação e atualização) | 301 arquivos, 2.493 casos passando, 1 pulado de propósito, 0 falhas |
+| `pnpm typecheck` | 0 erros |
+| `pnpm test:unit` (o repositório inteiro, não só `tests/unit/`) | 1.531 arquivos, 15.479 casos, 0 falhas, 0 erros não tratados |
+| `pnpm test:shell` (kit, scheduler, compose e scripts do Dokploy) | verde |
+| `pnpm lint` | 0 erros (436 avisos, todos anteriores a este trabalho) |
+| `pnpm lint:channels` | ok, nenhum arquivo novo de dívida |
+| `pnpm build` | compilado sem erro |
+| `pnpm release:conferir` | 18 fragmentos válidos: 1.56.0 + minor = **1.57.0** |
+| `pnpm checar:colisao-de-migration` | sem colisão; nenhum PR aberto no fork (conferido pela API do GitHub) |
+
+**Revisões:** três rodadas de revisão independente depois da implementação. A 2ª achou 13 pontos
+(R1–R13), a 3ª achou 7 (T1–T7), todos tratados. A revisão final dos consertos da 3ª rodada
+**não encontrou defeito**; a única observação menor dela (`revoked_by` gravável num token ativo)
+também foi fechada, com caso próprio no invariante.
+
+**Não medido aqui:** o `e2e` (Playwright contra Supabase local) e a instalação real pelo Dokploy,
+que dependem de Docker com acesso aos registros de imagem, bloqueado neste ambiente. Os dois são
+cobertos pelo CI do PR (`e2e`, `imagens-ok`) e pelo primeiro deploy em `crmimob.re9imob.com.br`.
