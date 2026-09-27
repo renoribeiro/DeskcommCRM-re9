@@ -143,8 +143,8 @@ export function SidebarContent({
               build — a imagem pré-buildada rejeitaria o domínio do self-hoster.
               Altura fixa e largura livre porque a arte enviada tem proporção
               desconhecida; forçar as duas distorceria o logo de quem configurou. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             {logo ? (
+              // eslint-disable-next-line @next/next/no-img-element -- ver o comentário acima
               <img
                 src={logo}
                 alt={nome}

@@ -93,7 +93,6 @@ export function appDaMetaDoAmbiente(
 const TTL_MS = 30_000;
 
 declare global {
-  // eslint-disable-next-line no-var
   var __memoDoAppDaMeta: { readonly valor: AppDaMetaEmVigor; readonly expiraEm: number } | null | undefined;
 }
 

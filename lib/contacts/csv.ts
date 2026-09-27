@@ -117,7 +117,7 @@ export function decodificarBytesDeTexto(bytes: ArrayBuffer | Uint8Array): BytesD
   }
 
   const latin = new TextDecoder("windows-1252").decode(buf);
-  // eslint-disable-next-line no-control-regex -- é exatamente o que se procura
+  // Caracteres de controle: é exatamente o que se procura (binário disfarçado).
   if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(latin)) return { binario: true };
   return { texto: semBom(latin) };
 }

@@ -206,7 +206,11 @@ describe("extractPdfText — estratégia `processo-a-parte`", () => {
     // dos dois lados.
     const script = `
       const fs = require("node:fs");
-      import("@/lib/ai/rag/extractors/pdf").then(async (m) => {
+      import("@/lib/ai/rag/extractors/pdf").then(async (ns) => {
+        // Sob o \`--eval\` o tsx avalia o script como CommonJS, e o \`import()\`
+        // de um módulo TS devolve o namespace com as exportações em \`default\`.
+        // Desembrulhar aqui é interop do TESTE — o worker importa estaticamente.
+        const m = ns.extractPdfText ? ns : ns.default;
         const texto = await m.extractPdfText(fs.readFileSync("tests/fixtures/sample-multipagina.pdf"));
         process.stdout.write(JSON.stringify({
           estrategia: m.estrategiaPadrao(),

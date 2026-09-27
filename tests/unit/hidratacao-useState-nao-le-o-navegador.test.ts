@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, posix } from "node:path";
 
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 /**
  * NENHUM `useState` DECIDE O PRIMEIRO RENDER LENDO O NAVEGADOR.
@@ -262,8 +262,20 @@ export function inicializadoresQueLeemONavegador(
   return infratoras;
 }
 
+/**
+ * Varrer o repositório inteiro com o compilador do TypeScript leva segundos
+ * (medido: 8,7 s num limite padrão de 15 s, instável sob carga). O índice é
+ * montado UMA vez, no `beforeAll`, e os dois pontos caros têm teto explícito
+ * — um teto folgado não esconde regressão de corretude, só de velocidade.
+ */
+const TETO_DA_VARREDURA_MS = 60_000;
+
 describe("o inicializador de useState não lê o navegador", () => {
   const fontes = fontesDoRepositorio();
+
+  beforeAll(() => {
+    indice(fontes);
+  }, TETO_DA_VARREDURA_MS);
 
   it("GUARDA DE VACUIDADE: a varredura alcança o repositório de verdade", () => {
     // Sem este caso, um caminho errado devolveria zero arquivos e a suíte
@@ -287,7 +299,7 @@ describe("o inicializador de useState não lê o navegador", () => {
         "o servidor mandou. Use `useSyncExternalStore` com um " +
         "`getServerSnapshot` determinístico — ver `lib/theme.tsx`.",
     ).toEqual([]);
-  });
+  }, TETO_DA_VARREDURA_MS);
 
   it("CONTROLE POSITIVO: a sonda reprova o padrão do defeito, inclusive através de um import", () => {
     // `lerPrefs()` mora em outro módulo e só lá dentro toca `window`. Se a
