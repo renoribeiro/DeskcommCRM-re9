@@ -60,11 +60,36 @@ describe("sendMessageSchema", () => {
     expect(r.success).toBe(false);
   });
 
+  // Auditoria P1: `media_url` do cliente virava proxy autenticado para a API
+  // do WAHA (compartilhada por todas as organizações) no GET /media.
   it("rejeita payload só com media_url", () => {
     const r = sendMessageSchema.safeParse({
       conversation_id: "11111111-1111-4111-8111-111111111111",
       type: "image",
       media_url: "https://cdn.example.com/foo.jpg",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejeita media_url mesmo ao lado de body (não descarta em silêncio)", () => {
+    const r = sendMessageSchema.safeParse({
+      conversation_id: "11111111-1111-4111-8111-111111111111",
+      type: "image",
+      body: "legenda",
+      media_url: "http://waha:3000/api/sessions",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      expect(r.error.issues.some((i) => i.path.join(".") === "media_url")).toBe(true);
+    }
+  });
+
+  it("aceita media_storage_path (o único caminho de mídia de saída)", () => {
+    const r = sendMessageSchema.safeParse({
+      conversation_id: "11111111-1111-4111-8111-111111111111",
+      type: "image",
+      media_storage_path: "org/conv/out-1.jpg",
+      media_mime: "image/jpeg",
     });
     expect(r.success).toBe(true);
   });

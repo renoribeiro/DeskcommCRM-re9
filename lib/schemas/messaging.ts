@@ -72,9 +72,25 @@ export const sendMessageSchema = z
     conversation_id: z.string().uuid(),
     type: messageTypeSchema.default("text"),
     body: z.string().min(1).max(4096).optional(),
-    media_url: z.string().url().optional(),
+    /**
+     * RECUSADO, e de propósito com erro próprio em vez de descartado em silêncio.
+     *
+     * `media_url` vinda do cliente virava, na linha da mensagem, uma URL que o
+     * `GET /messages/{id}/media` buscava pelo adapter do canal — com a API key do
+     * WAHA, que é da instalação e serve a TODAS as organizações (auditoria P1,
+     * `docs/imobiliario/04-auditoria-seguranca-e-qualidade.md`). E o envio nunca a
+     * usou: o transporte só sai de `media_storage_path`. Mídia de saída sobe por
+     * `POST /api/v1/conversations/{id}/media` e chega aqui como
+     * `media_storage_path`, conferido contra a conversa no handler.
+     */
+    media_url: z
+      .never({
+        error:
+          "media_url não é aceito no envio. Suba o arquivo em POST /api/v1/conversations/{id}/media e envie media_storage_path.",
+      })
+      .optional(),
     media_storage_path: z.string().min(1).max(500).optional(),
-    media_mime: z.string().optional(),
+    media_mime: z.string().max(255).optional(),
     media_size_bytes: z.number().int().positive().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
     /** Só em `type: "template"`. Nome exato aprovado na Meta. */
@@ -120,11 +136,11 @@ export const sendMessageSchema = z
         }
         return false;
       }
-      return !!d.body || !!d.media_url || !!d.media_storage_path;
+      return !!d.body || !!d.media_storage_path;
     },
     {
       message:
-        "body, media_url, media_storage_path, metadata.shared_contact_id or metadata.shared_contact.phone_number required",
+        "body, media_storage_path, metadata.shared_contact_id or metadata.shared_contact.phone_number required",
       path: ["body"],
     },
   );
