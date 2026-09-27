@@ -1,6 +1,8 @@
 import { withSentryConfig } from "@sentry/nextjs/config";
 import type { NextConfig } from "next";
 
+import { CONTENT_SECURITY_POLICY } from "./lib/http/cabecalhos-de-seguranca";
+
 /** Performance budget (EPIC-12 §S-12.05):
  *  - LCP < 2.5s p75
  *  - CLS < 0.1 p75
@@ -113,6 +115,11 @@ const nextConfig: NextConfig = {
             key: "Permissions-Policy",
             value: "camera=(), microphone=(self), geolocation=(), notifications=(self)",
           },
+          // Só diretivas que não quebram o Next (sem script-src/style-src) — o
+          // porquê de cada uma em `lib/http/cabecalhos-de-seguranca.ts`. O HSTS
+          // NÃO mora aqui: este bloco é resolvido no build, e a imagem é uma só
+          // para toda instalação; quem o emite é o `proxy.ts`, em runtime.
+          { key: "Content-Security-Policy", value: CONTENT_SECURITY_POLICY },
         ],
       },
     ];
