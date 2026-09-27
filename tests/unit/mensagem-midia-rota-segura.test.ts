@@ -138,6 +138,29 @@ describe("P3 — bytes do remetente na origem do app", () => {
     expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
   });
 
+  it("PDF servido pela origem do app sai como download (o Chrome não abre PDF sob sandbox)", async () => {
+    recebida();
+    estado.midia = { buffer: Buffer.from("%PDF-1.4"), mime: "application/pdf" };
+    const res = await chamar();
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("content-disposition")).toBe("attachment");
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
+  });
+
+  it("PDF já persistido abre no navegador pela URL assinada (outra origem)", async () => {
+    estado.linha = {
+      id: MSG_ID,
+      direction: "inbound",
+      media_url: null,
+      media_mime: "application/pdf",
+      media_storage_path: `${ORG}/c/a.pdf`,
+      channel_session_id: "s1",
+    };
+    const res = await chamar();
+    expect(res.status).toBe(302);
+    expect(createSignedUrl).toHaveBeenCalledWith(`${ORG}/c/a.pdf`, 3600, undefined);
+  });
+
   it("persistida com tipo fora da lista: a URL assinada pede download", async () => {
     estado.linha = {
       id: MSG_ID,

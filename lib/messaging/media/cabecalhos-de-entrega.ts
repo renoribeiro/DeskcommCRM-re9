@@ -13,6 +13,12 @@
  *     dentro de um tipo inofensivo;
  *  3. `Content-Security-Policy: sandbox; default-src 'none'` — mesmo que algo
  *     escape das duas primeiras, o documento nasce numa origem opaca, sem script.
+ *
+ * ⚠️ PDF é exibível na URL ASSINADA do Storage (outra origem, sem estes
+ * cabeçalhos), mas NÃO nos bytes servidos aqui: o visualizador de PDF do Chrome
+ * se recusa a abrir documento sob `sandbox`, e o atendente veria uma página em
+ * branco. Neste caminho — só o intervalo antes de a mídia ser persistida — o
+ * PDF sai como download (`podeExibirNaOrigemDoApp`).
  */
 
 const EXIBIVEIS_EXATOS = new Set([
@@ -34,6 +40,14 @@ export function podeExibirNoNavegador(mime: string | null | undefined): boolean 
   return /^(audio|video)\/[a-z0-9.+-]+$/.test(base);
 }
 
+/**
+ * O que pode sair `inline` NOS BYTES SERVIDOS PELA ORIGEM DO APP (sob `sandbox`):
+ * a mesma lista, menos PDF — ver o aviso do cabeçalho.
+ */
+export function podeExibirNaOrigemDoApp(mime: string | null | undefined): boolean {
+  return tipoBase(mime) !== "application/pdf" && podeExibirNoNavegador(mime);
+}
+
 export const CSP_DE_BYTES_DE_FORA = "sandbox; default-src 'none'";
 
 /**
@@ -45,7 +59,7 @@ export const CSP_DE_BYTES_DE_FORA = "sandbox; default-src 'none'";
 export function cabecalhosDeBytesDeFora(
   mime: string | null | undefined,
 ): Record<string, string> {
-  const exibivel = podeExibirNoNavegador(mime);
+  const exibivel = podeExibirNaOrigemDoApp(mime);
   return {
     "Content-Type": exibivel ? tipoBase(mime) : "application/octet-stream",
     "Content-Disposition": exibivel ? "inline" : "attachment",
