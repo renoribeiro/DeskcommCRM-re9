@@ -73,7 +73,7 @@ export const sendMessageSchema = z
     type: messageTypeSchema.default("text"),
     body: z.string().min(1).max(4096).optional(),
     /**
-     * RECUSADO, e de propósito com erro próprio em vez de descartado em silêncio.
+     * IGNORADO: aceito na entrada e descartado aqui, nunca gravado nem usado.
      *
      * `media_url` vinda do cliente virava, na linha da mensagem, uma URL que o
      * `GET /messages/{id}/media` buscava pelo adapter do canal — com a API key do
@@ -82,12 +82,15 @@ export const sendMessageSchema = z
      * usou: o transporte só sai de `media_storage_path`. Mídia de saída sobe por
      * `POST /api/v1/conversations/{id}/media` e chega aqui como
      * `media_storage_path`, conferido contra a conversa no handler.
+     *
+     * Descartar em vez de recusar preserva o contrato de quem já mandava
+     * `body` + `media_url` (2xx, e o texto sai — como sempre saiu). Só com
+     * `media_url` e nada mais a mensagem não tem conteúdo, e o `refine` abaixo
+     * recusa — antes ela era aceita e nada chegava ao contato.
      */
     media_url: z
-      .never({
-        error:
-          "media_url não é aceito no envio. Suba o arquivo em POST /api/v1/conversations/{id}/media e envie media_storage_path.",
-      })
+      .unknown()
+      .transform(() => undefined)
       .optional(),
     media_storage_path: z.string().min(1).max(500).optional(),
     media_mime: z.string().max(255).optional(),

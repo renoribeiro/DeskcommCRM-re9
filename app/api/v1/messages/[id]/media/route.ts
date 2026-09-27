@@ -59,7 +59,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx): Promise<Response> {
   // Filtro explícito de organization_id por doutrina (defense-in-depth).
   const { data: msg, error } = await supabase
     .from("messages")
-    .select("id, direction, media_url, media_mime, media_storage_path, channel_session_id")
+    .select("id, direction, sent_via, media_url, media_mime, media_storage_path, channel_session_id")
     .eq("id", messageId)
     .eq("organization_id", activeOrg.orgId)
     .maybeSingle();
@@ -109,7 +109,15 @@ export async function GET(_req: NextRequest, ctx: RouteCtx): Promise<Response> {
   // adapter levava a credencial do canal (no WAHA, a da instalação inteira)
   // para onde esse texto apontasse. Linhas antigas de saída com `media_url`
   // gravado caem no 404 abaixo.
-  if (msg.media_url && msg.direction === "inbound") {
+  //
+  // O ECO do celular (`sent_via='external_device'`: a pessoa mandou pelo
+  // aparelho, e o canal nos avisou) também vem do canal — a ingestão grava a
+  // `media_url` que o próprio canal deu, e a linha é de saída. Sem esta
+  // exceção, a foto mandada pelo celular ficava 404 até a persistência (e
+  // para sempre, se ela falhasse). O adapter continua só buscando o caminho de
+  // arquivo da sessão da conversa.
+  const veioDoCanal = msg.direction === "inbound" || msg.sent_via === "external_device";
+  if (msg.media_url && veioDoCanal) {
     try {
       const admin = createAdminClient();
       const { data: sessao } = await admin

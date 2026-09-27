@@ -136,6 +136,10 @@ DASHBOARD_PASSWORD=$(hex 16)
 # Segredos do CRM
 INTERNAL_SECRET=$(hex 32)
 INTERNAL_CRON_SECRET=$(hex 32)
+# Chaves próprias de convite e de OAuth: sem elas, as duas seriam derivadas do
+# INTERNAL_SECRET, e quem o visse forjaria convite de admin e state de OAuth.
+INVITE_TOKEN_SECRET=$(hex 32)
+OAUTH_STATE_SECRET=$(hex 32)
 NUVEMSHOP_OAUTH_ENCRYPTION_KEY=$(hex 32)
 CPF_ENCRYPTION_KEY=$(b64)
 AI_CRED_AES_KEY=$(b64)

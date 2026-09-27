@@ -14,8 +14,11 @@
  * assinado com o `INTERNAL_SECRET` CRU, que também é o bearer dos crons e que
  * o runbook do relógio HTTP manda cadastrar num serviço de terceiros: quem
  * visse aquele bearer forjava convite de `admin` para qualquer organização.
- * Com a separação de domínio, o bearer não é mais a chave de assinatura, e a
- * chave derivada não revela o segredo.
+ * A derivação separa DOMÍNIOS, mas não protege contra esse vazamento: o rótulo
+ * é público, e quem tem o `INTERNAL_SECRET` calcula a mesma chave. O que
+ * protege é o `INVITE_TOKEN_SECRET` próprio — o `gerar-env.sh` do Dokploy o
+ * gera — e o runbook do relógio usar `INTERNAL_CRON_SECRET`, nunca o
+ * `INTERNAL_SECRET`.
  *
  * E faltava fechar: sem segredo, a assinatura caía em `"dev-fallback"` — uma
  * chave pública, escrita neste arquivo. Agora, sem segredo, assinar e conferir

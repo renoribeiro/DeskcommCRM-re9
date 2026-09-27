@@ -38,6 +38,22 @@ describe("chaveDoEstadoOAuth", () => {
     expect(ROTULO_DA_CHAVE_DO_ESTADO_OAUTH).toMatch(/oauth-state:v\d+$/);
     expect(chaveDoEstadoOAuth(SEGREDO).equals(Buffer.from(SEGREDO))).toBe(false);
   });
+
+  it("com OAUTH_STATE_SECRET, quem só tem o INTERNAL_SECRET não calcula a chave", () => {
+    vi.stubEnv("OAUTH_STATE_SECRET", "segredo-dedicado-do-oauth-32-chars!!");
+    const soComOInterno = createHmac("sha256", SEGREDO).update(ROTULO_DA_CHAVE_DO_ESTADO_OAUTH).digest();
+    const dedicada = createHmac("sha256", "segredo-dedicado-do-oauth-32-chars!!")
+      .update(ROTULO_DA_CHAVE_DO_ESTADO_OAUTH)
+      .digest();
+    expect(chaveDoEstadoOAuth(SEGREDO).equals(soComOInterno)).toBe(false);
+    expect(chaveDoEstadoOAuth(SEGREDO).equals(dedicada)).toBe(true);
+  });
+
+  it("OAUTH_STATE_SECRET vazio ou só espaços conta como ausente", () => {
+    vi.stubEnv("OAUTH_STATE_SECRET", "   ");
+    const esperado = createHmac("sha256", SEGREDO).update(ROTULO_DA_CHAVE_DO_ESTADO_OAUTH).digest();
+    expect(chaveDoEstadoOAuth(SEGREDO).equals(esperado)).toBe(true);
+  });
 });
 
 describe("agenda Google", () => {

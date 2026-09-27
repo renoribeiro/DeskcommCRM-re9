@@ -72,17 +72,15 @@ describe("sendMessageSchema", () => {
     expect(r.success).toBe(false);
   });
 
-  it("rejeita media_url mesmo ao lado de body (não descarta em silêncio)", () => {
+  it("aceita media_url ao lado de body e o DESCARTA (contrato de quem já integrava)", () => {
     const r = sendMessageSchema.safeParse({
       conversation_id: "11111111-1111-4111-8111-111111111111",
-      type: "image",
+      type: "text",
       body: "legenda",
       media_url: "http://gateway-do-canal:3000/api/sessions",
     });
-    expect(r.success).toBe(false);
-    if (!r.success) {
-      expect(r.error.issues.some((i) => i.path.join(".") === "media_url")).toBe(true);
-    }
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.media_url).toBeUndefined();
   });
 
   it("aceita media_storage_path (o único caminho de mídia de saída)", () => {

@@ -165,7 +165,7 @@ Uma revisão independente do código já corrigido achou 13 pontos, todos tratad
 | R5 | O farejador de tipo recusava CSV do Excel, UTF-16 com BOM, BMP/TIFF e MOV | Aceitos pelos bytes |
 | R6 | Listagens do agente filtravam o contato depois de paginar; memória da empresa gravável no atendimento | Filtro no servidor; `crm_save_org_memory` recusado no atendimento |
 | R7 | Token criado por pessoa podia levar escopo reservado ao agente | Gatilho no banco (migration `5001_imob_`) |
-| R8 | O token de convite usava o segredo interno cru, com recurso de desenvolvimento | Chave derivada com rótulo próprio; sem segredo, o convite fecha |
+| R8 | O token de convite usava o segredo interno cru, com recurso de desenvolvimento | Chave com rótulo próprio; sem segredo, o convite fecha. O segredo dedicado veio na 3ª rodada (T2) |
 | R9 | O `setup` do Dokploy reprovava erros benignos do baseline | Só reprova o que é do `storage` |
 | R10 | O setup aplicava o baseline do clone, não o da versão das imagens | Baixa o baseline da tag `v${IMAGE_TAG}` |
 | R11 | O caminho de arquivo do WAHA não exigia a sessão | Exige 2 segmentos, o primeiro sendo a sessão da conversa |
@@ -178,6 +178,18 @@ com o projeto de origem; e o fragmento que tira `media_url` do envio segue `nada
 nunca entregou a mídia ao contato (só `media_storage_path` entrega), então nenhuma integração que
 funcionava deixa de funcionar; a nota pública explica o caminho certo.
 
+### 4.1.1 Terceira rodada: revisão independente do código integrado
+
+| ID | Sev. | Achado | Ajuste |
+|---|---|---|---|
+| T1 | 🟡 | O gatilho da 5001 só conferia o UPDATE quando escopo ou nome mudavam: um admin pela REST trocava o `token_hash` de um token do agente ou de integração (tomando a identidade dele) ou reativava um token revogado; no INSERT, `created_by` podia ser de outro membro | Com ator humano, UPDATE só revoga (em nome de quem revoga; token revogado não volta) e INSERT exige `created_by = auth.uid()`. 5 casos novos no invariante |
+| T2 | 🟡 | A chave derivada do `INTERNAL_SECRET` não protege contra quem vazou esse segredo: o rótulo é público. O comentário do código afirmava o contrário | `INVITE_TOKEN_SECRET` e `OAUTH_STATE_SECRET` dedicados (o segundo cobre Google Agenda, Google Ads e Nuvemshop), gerados pelo `gerar-env.sh`; comentários e notas públicas corrigidos |
+| T3 | 🔵 | `crm_list_conversations` filtrava o contato depois de paginar | O contato vai no SQL (`recorte` do handler), com teste que prova o filtro no banco |
+| T4 | 🔵 | A mídia do eco do celular (saída com `sent_via='external_device'`) ficou 404 até ser persistida | O proxy aceita também o eco, sempre pelo caminho de arquivo da sessão |
+| T5 | 🔵 | Recusar `media_url` quebrava quem mandava `body` + `media_url` | O campo é aceito e descartado; só `media_url` sozinho é recusado, por falta de conteúdo |
+| T6 | 🔵 | Mensagens novas sem espanhol/chinês, e três fixas em português | Traduções acrescentadas; `/win` e `realtime-token` passam pelo tradutor. O `proxy.ts` e o guarda de admin seguem em português: não conhecem o idioma de quem chama |
+| T7 | 🔵 | O `/win` passou a responder 422 onde antes ignorava o corpo inválido | Registrado na nota pública |
+
 ### 4.2 Achados durante a implementação (fora do relatório original)
 
 - **Agenda:** compromisso em andamento ia para "Passados" e oferecia "Faltou". Corrigido; o `it.fails` que documentava o defeito virou teste normal.
@@ -189,6 +201,7 @@ funcionava deixa de funcionar; a nota pública explica o caminho certo.
 
 | Risco | Por que fica | Mitigação |
 |---|---|---|
+| Convite e `state` de OAuth numa instalação que não define os segredos dedicados (ex.: kit HostGator) | O kit do projeto de origem não os gera | Chave derivada separa os usos; o runbook do relógio usa `INTERNAL_CRON_SECRET`; o Dokploy gera os dois |
 | Webhook do WAHA Core sem assinatura (A2/P5) | O Core não assina | Rota negada no proxy público; assinatura errada sempre recusada; WAHA Plus liga a exigência |
 | Rascunho do agente mantém o token efêmero do turno | O rascunho é revisado por humano antes de sair | Escopo mínimo e poda diária |
 | O gateway de IA da Vercel não aceita `fetch` por requisição | Limite da biblioteca | Vale o teto do turno inteiro |

@@ -16,6 +16,7 @@ import { type NextRequest } from "next/server";
 import { ApiError } from "@/lib/api/types";
 import { ok, fail } from "@/lib/api/wrappers";
 import { requireRole } from "@/lib/auth/require-role";
+import { traduzir } from "@/lib/i18n/dicionario";
 import { encerraDemanda } from "@/lib/leads/encerramento";
 import { winLeadSchema } from "@/lib/schemas/leads";
 import { createClient } from "@/lib/supabase/server";
@@ -45,10 +46,15 @@ export async function POST(
   const corpo = (await req.json().catch(() => null)) ?? {};
   const parsed = winLeadSchema.safeParse(corpo);
   if (!parsed.success) {
-    return fail("validation_failed", "won_reason inválido (texto de até 500 caracteres).", 422, {
-      requestId,
-      details: { issues: parsed.error.issues },
-    });
+    return fail(
+      "validation_failed",
+      traduzir("won_reason inválido (texto de até 500 caracteres).", authz.user.idioma),
+      422,
+      {
+        requestId,
+        details: { issues: parsed.error.issues },
+      },
+    );
   }
   const wonReason = parsed.data.won_reason ?? null;
 

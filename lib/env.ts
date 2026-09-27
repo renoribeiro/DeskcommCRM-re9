@@ -82,6 +82,13 @@ const schema = z.object({
    */
   INVITE_TOKEN_SECRET: z.string().optional().default(""),
   /**
+   * Segredo dedicado para assinar o `state` (e o vínculo) dos fluxos OAuth
+   * (Google Agenda, Google Ads, Nuvemshop) — `lib/auth/chave-do-estado-oauth.ts`.
+   * Vazio: a chave é derivada do `INTERNAL_SECRET`, que também é bearer de cron.
+   * Lido direto do `process.env` pelo módulo; registrado aqui para o inventário.
+   */
+  OAUTH_STATE_SECRET: z.string().optional().default(""),
+  /**
    * Segredo do DONO DA INSTALAÇÃO para `POST /api/v1/tenants/provision` (um
    * sistema externo cria organizações). Vazio por padrão = a rota não existe
    * (404); com menos de 32 caracteres também fica desligada.

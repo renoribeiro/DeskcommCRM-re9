@@ -34,6 +34,8 @@ check "cadastro só por convite (CRM e Auth fecham juntos)" \
   bash -c 'grep -qx "SIGNUP_MODE=so_convite" "$1" && grep -qx "DISABLE_SIGNUP=true" "$1"' _ "$WORK/.env"
 vazios="$(grep -E '^[A-Z_0-9]+=$' "$WORK/.env" | grep -vE '^SMTP_(HOST|USERNAME|PASSWORD|FROM_EMAIL)=$' || true)"
 check "nenhum segredo sai vazio (só o SMTP opcional)" igual "$vazios" ''
+check "chaves próprias de convite e de OAuth (sem elas, o INTERNAL_SECRET forja as duas)" \
+  bash -c 'grep -qxE "INVITE_TOKEN_SECRET=[0-9a-f]{64}" "$1" && grep -qxE "OAUTH_STATE_SECRET=[0-9a-f]{64}" "$1"' _ "$WORK/.env"
 check "domínio inválido é recusado" bash -c '! bash "$1" --dominio "https://x" --email a@b.co --versao 1.57.0 >/dev/null 2>&1' _ "$GERAR"
 bash "$GERAR" --dominio a.exemplo.com --email a@exemplo.com --versao 1.57.0 > "$WORK/.env2"
 check "duas rodadas geram segredos diferentes" \

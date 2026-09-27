@@ -81,6 +81,9 @@ interface Q {
 }
 type Resolver = (q: Q) => { data?: unknown; error?: unknown };
 
+/** Todo `.eq(coluna, valor)` pedido ao banco, para provar QUAL filtro foi no SQL. */
+const filtrosEq: Array<[string, unknown]> = [];
+
 function makeSupabase(resolve: Resolver) {
   const from = (table: string) => {
     const q: Q = { table, select: null, terminal: "then" };
@@ -90,7 +93,10 @@ function makeSupabase(resolve: Resolver) {
         q.select = cols;
         return chain;
       },
-      eq: () => chain,
+      eq: (coluna: string, valor: unknown) => {
+        filtrosEq.push([coluna, valor]);
+        return chain;
+      },
       is: () => chain,
       in: () => chain,
       or: () => chain,
@@ -319,6 +325,27 @@ describe("crm_list_conversations — coerência queue_position ↔ inbox", () =>
     // A mais antiga (30 min) é posição 1; a mais nova (2 min) é a última.
     expect(posById.get(CONV_OLD)).toBe(1);
     expect(posById.get(CONV_NEW)).toBe(3);
+  });
+
+  it("contact_id filtra NO BANCO, não na página já truncada (R6)", async () => {
+    filtrosEq.length = 0;
+    const CONTATO = "c0000000-0000-4000-8000-00000000c0c0";
+    const rows = [convRow({ id: CONV_OLD, contact_id: CONTATO, status: "claimed" })];
+    const res = (await crmListConversations.handler(
+      { limit: 10, contact_id: CONTATO } as Parameters<typeof crmListConversations.handler>[0],
+      makeCtx((q) => (q.select === "id" ? { data: [], error: null } : { data: rows, error: null })),
+    )) as { conversations: Array<Record<string, unknown>> };
+    expect(filtrosEq).toContainEqual(["contact_id", CONTATO]);
+    expect(res.conversations.map((c) => c.id)).toEqual([CONV_OLD]);
+  });
+
+  it("sem contact_id, nenhum filtro de contato vai ao banco", async () => {
+    filtrosEq.length = 0;
+    await crmListConversations.handler(
+      { limit: 10 } as Parameters<typeof crmListConversations.handler>[0],
+      makeCtx((q) => (q.select === "id" ? { data: [], error: null } : { data: [], error: null })),
+    );
+    expect(filtrosEq.some(([c]) => c === "contact_id")).toBe(false);
   });
 
   it("shape aditivo: campos antigos preservados, novos presentes", async () => {

@@ -8995,6 +8995,11 @@ export const DICIONARIO: Traducoes = {
   "Membro está revogado.": { es: "El acceso del miembro está revocado." },
   "Membro não encontrado.": { es: "Miembro no encontrado." },
   "Mensagem sem mídia.": { es: "Mensaje sin contenido multimedia." },
+  "Tipo de arquivo não suportado.": { es: "Tipo de archivo no admitido." },
+  "o endereço (base URL) aponta para um destino que esta instalação não permite": { es: "la dirección (base URL) apunta a un destino que esta instalación no permite" },
+  "Confirme a verificação em duas etapas para continuar.": { es: "Confirma la verificación en dos pasos para continuar." },
+  "Muitos pedidos de token. Tente em um minuto.": { es: "Demasiadas solicitudes de token. Inténtalo en un minuto." },
+  "won_reason inválido (texto de até 500 caracteres).": { es: "won_reason no válido (texto de hasta 500 caracteres)." },
   "Mídia indisponível no momento.": { es: "Contenido multimedia no disponible en este momento." },
   "Muitas trocas de logo seguidas. Tente em alguns minutos.": {
     es: "Demasiados cambios de logo seguidos. Intenta de nuevo en unos minutos.",

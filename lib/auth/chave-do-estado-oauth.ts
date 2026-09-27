@@ -7,10 +7,14 @@
  * forjava `state` de OAuth — plantava a conta Google/Nuvemshop DELE na
  * organização de outra pessoa. Um segredo, dois usos, duas superfícies.
  *
- * Separação de domínio: a chave do `state` é `HMAC-SHA256(INTERNAL_SECRET,
- * rótulo)`. Conhecer a chave derivada não revela o segredo (HMAC não inverte),
- * e o segredo, usado como bearer, não é mais a chave de assinatura. O rótulo
- * é versionado para uma troca futura não colidir com esta.
+ * A chave do `state` é `HMAC-SHA256(segredo, rótulo)`, e o segredo é
+ * `OAUTH_STATE_SECRET` quando definido — só então o vazamento do bearer de cron
+ * deixa de valer para forjar `state`. Sem ele, o segredo é o `INTERNAL_SECRET`
+ * que o chamador passa, e a derivação é só SEPARAÇÃO DE DOMÍNIO: o rótulo é
+ * público, então quem tem o `INTERNAL_SECRET` calcula a mesma chave. Por isso
+ * o `gerar-env.sh` do Dokploy gera o segredo dedicado, e o runbook do relógio
+ * usa `INTERNAL_CRON_SECRET`, nunca o `INTERNAL_SECRET`. O rótulo é versionado
+ * para uma troca futura não colidir com esta.
  *
  * O rótulo não leva o nome do produto de propósito: o produto é revendido com
  * outra marca (`tests/unit/branding.test.ts`).
@@ -24,6 +28,12 @@ import { createHmac } from "node:crypto";
 
 export const ROTULO_DA_CHAVE_DO_ESTADO_OAUTH = "crm:oauth-state:v1";
 
+/** O segredo dedicado, quando o ambiente o define (vazio conta como ausente). */
+export function segredoDedicadoDoEstadoOAuth(): string {
+  return (process.env.OAUTH_STATE_SECRET ?? "").trim();
+}
+
 export function chaveDoEstadoOAuth(segredoMestre: string): Buffer {
-  return createHmac("sha256", segredoMestre).update(ROTULO_DA_CHAVE_DO_ESTADO_OAUTH, "utf8").digest();
+  const segredo = segredoDedicadoDoEstadoOAuth() || segredoMestre;
+  return createHmac("sha256", segredo).update(ROTULO_DA_CHAVE_DO_ESTADO_OAUTH, "utf8").digest();
 }

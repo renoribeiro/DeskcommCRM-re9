@@ -39364,10 +39364,45 @@ begin
     return new;
   end if;
 
-  -- UPDATE que não mexe em escopo nem nome (revogar, last_used_at) passa.
-  if tg_op = 'UPDATE'
-     and new.scopes is not distinct from old.scopes
-     and new.name is not distinct from old.name then
+  -- INSERT: a autoria é de quem grava. Sem isto a linha nasce em nome de
+  -- outro membro (e herda o papel dele na conferência de `resolveApiToken`).
+  if tg_op = 'INSERT' and new.created_by is distinct from auth.uid() then
+    raise exception 'O token precisa ser criado em nome de quem o grava.'
+      using errcode = 'PT403';
+  end if;
+
+  -- UPDATE por pessoa só REVOGA. Qualquer outra coluna fica congelada: trocar
+  -- `token_hash` de um token do agente (`agent-run:`) ou de integração
+  -- (`integration:`) seria tomar a identidade dele com um segredo novo, e
+  -- limpar `revoked_at`/`expires_at` ressuscitaria um token morto. O uso
+  -- (`last_used_at`/`last_used_ip`) é gravado pelo service role, que não
+  -- passa por aqui; `updated_at` acompanha a revogação.
+  if tg_op = 'UPDATE' then
+    if new.id              is distinct from old.id
+       or new.organization_id is distinct from old.organization_id
+       or new.created_by   is distinct from old.created_by
+       or new.name         is distinct from old.name
+       or new.prefix       is distinct from old.prefix
+       or new.token_hash   is distinct from old.token_hash
+       or new.scopes       is distinct from old.scopes
+       or new.expires_at   is distinct from old.expires_at
+       or new.created_at   is distinct from old.created_at
+       or new.last_used_at is distinct from old.last_used_at
+       or new.last_used_ip is distinct from old.last_used_ip then
+      raise exception 'Um token só pode ser revogado; para mudar qualquer outra coisa, crie um novo.'
+        using errcode = 'PT403';
+    end if;
+    if old.revoked_at is not null
+       and (new.revoked_at is distinct from old.revoked_at
+            or new.revoked_by is distinct from old.revoked_by) then
+      raise exception 'Token revogado não volta a valer.'
+        using errcode = 'PT403';
+    end if;
+    if new.revoked_at is not null and new.revoked_by is distinct from auth.uid()
+       and old.revoked_at is null then
+      raise exception 'A revogação é registrada em nome de quem revoga.'
+        using errcode = 'PT403';
+    end if;
     return new;
   end if;
 
@@ -39432,7 +39467,7 @@ create trigger trg_valida_token_de_pessoa
   for each row execute function public.fn_token_de_pessoa_so_com_escopo_concedivel();
 
 comment on function public.fn_token_de_pessoa_so_com_escopo_concedivel() is
-  'Gatilho de api_tokens (migration 5001, fork imob, achado R7/A4): com ator humano (auth.uid() não nulo) recusa com PT403 escopo fora da lista concedível (espelho de ESCOPOS_DE_TOKEN_CONCEDIVEIS), prefixos actor:/agent_run:, nome agent-run: e role: acima do papel de quem grava. Service role passa.';
+  'Gatilho de api_tokens (migration 5001, fork imob, achado R7/A4): com ator humano (auth.uid() não nulo) recusa com PT403 escopo fora da lista concedível (espelho de ESCOPOS_DE_TOKEN_CONCEDIVEIS), prefixos actor:/agent_run:, nome agent-run:, role: acima do papel de quem grava e created_by alheio; no UPDATE só permite revogar. Service role passa.';
 
 
 -- ---- VARREDURA anon: função nova nasce exposta em quem ATUALIZA (migration 0116) ----

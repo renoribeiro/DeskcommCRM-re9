@@ -83,6 +83,36 @@ describe("P1 — o fallback por media_url vale só para mensagem recebida", () =
     expect(fetchInboundMedia).not.toHaveBeenCalled();
   });
 
+  it("ECO do celular (saída com sent_via=external_device): serve pelo adapter", async () => {
+    estado.linha = {
+      id: MSG_ID,
+      direction: "outbound",
+      sent_via: "external_device",
+      media_url: "http://localhost:3000/api/files/sessao/foto.jpg",
+      media_mime: "image/jpeg",
+      media_storage_path: null,
+      channel_session_id: "s1",
+    };
+    const res = await chamar();
+    expect(res.status).toBe(200);
+    expect(fetchInboundMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it("saída pela API (sent_via=api) com media_url segue 404", async () => {
+    estado.linha = {
+      id: MSG_ID,
+      direction: "outbound",
+      sent_via: "api",
+      media_url: "http://waha:3000/api/sessions",
+      media_mime: "image/jpeg",
+      media_storage_path: null,
+      channel_session_id: "s1",
+    };
+    const res = await chamar();
+    expect(res.status).toBe(404);
+    expect(fetchInboundMedia).not.toHaveBeenCalled();
+  });
+
   it("mensagem RECEBIDA ainda não persistida: serve pelo adapter (vacuidade)", async () => {
     estado.linha = {
       id: MSG_ID,

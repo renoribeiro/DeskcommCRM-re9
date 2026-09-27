@@ -158,27 +158,21 @@ describe("R7/A4 — token gravado por pessoa só leva escopo concedível (5001)"
     expect(await inserir("service_role", "nuvemshop", ["integration:nuvemshop", "mcp:read"])).toBeNull();
   });
 
-  it("UPDATE: admin não troca os escopos por um de servidor, mas revoga token de servidor", async () => {
+  it("⛔ INSERT em nome de outro membro (created_by alheio) é recusado", async () => {
     const cliente = await pool.connect();
     try {
       await cliente.query("begin");
-      const { rows } = await cliente.query<{ id: string }>(
-        `insert into public.api_tokens (organization_id, created_by, name, prefix, token_hash, scopes)
-         values ($1, $2, 'provisionado', 'dsk_a4upd', decode(md5(random()::text), 'hex'),
-                 '["integration:x"]'::jsonb) returning id`,
-        [ORG, ADMIN],
-      );
-      const id = rows[0]!.id;
       await cliente.query("set local role authenticated");
       await cliente.query(`select set_config('request.jwt.claims', $1, true)`, [
         JSON.stringify({ sub: ADMIN, role: "authenticated" }),
       ]);
-      // Revogar (sem mexer em escopo nem nome) passa.
-      await cliente.query(`update public.api_tokens set revoked_at = now() where id = $1`, [id]);
-      await cliente.query("savepoint s");
       let erro: Erro | null = null;
       try {
-        await cliente.query(`update public.api_tokens set scopes = '["actor:ai_agent"]'::jsonb where id = $1`, [id]);
+        await cliente.query(
+          `insert into public.api_tokens (organization_id, created_by, name, prefix, token_hash, scopes)
+           values ($1, $2, 'em-nome-de-outro', 'dsk_a4alheio', decode(md5(random()::text), 'hex'), '["mcp:read"]'::jsonb)`,
+          [ORG, GERENTE],
+        );
       } catch (e) {
         erro = erroDe(e);
       }
@@ -187,5 +181,72 @@ describe("R7/A4 — token gravado por pessoa só leva escopo concedível (5001)"
       await cliente.query("rollback").catch(() => undefined);
       cliente.release();
     }
+  });
+
+  /**
+   * Grava um token de SERVIDOR (como o provisionamento ou o mint efêmero) e
+   * roda `sql` como o admin da organização, pela REST. Devolve o erro ou null.
+   * `revogadoAntes` revoga pelo service role antes de trocar de papel.
+   */
+  async function atualizarComoAdmin(sql: string, revogadoAntes = false): Promise<Erro | null> {
+    const cliente = await pool.connect();
+    seq += 1;
+    try {
+      await cliente.query("begin");
+      const { rows } = await cliente.query<{ id: string }>(
+        `insert into public.api_tokens (organization_id, created_by, name, prefix, token_hash, scopes, revoked_at, revoked_by)
+         values ($1, $2, 'agent-run:run-9', $3, decode(md5(random()::text), 'hex'),
+                 '["mcp:write","actor:ai_agent","agent_run:run-9"]'::jsonb,
+                 case when $4 then now() - interval '1 hour' end, case when $4 then $2::uuid end) returning id`,
+        [ORG, ADMIN, `dsk_a4u${seq}`, revogadoAntes],
+      );
+      await cliente.query("set local role authenticated");
+      await cliente.query(`select set_config('request.jwt.claims', $1, true)`, [
+        JSON.stringify({ sub: ADMIN, role: "authenticated" }),
+      ]);
+      try {
+        await cliente.query(sql.replaceAll("$ID", "$1"), [rows[0]!.id]);
+        return null;
+      } catch (e) {
+        return erroDe(e);
+      }
+    } finally {
+      await cliente.query("rollback").catch(() => undefined);
+      cliente.release();
+    }
+  }
+
+  it("CONTROLE: admin revoga um token de servidor pela REST (em nome dele)", async () => {
+    const erro = await atualizarComoAdmin(
+      `update public.api_tokens set revoked_at = now(), revoked_by = '${ADMIN}', updated_at = now() where id = $ID`,
+    );
+    expect(erro, `revogação recusada: ${erro?.message}`).toBeNull();
+  });
+
+  it("⛔ UPDATE: admin não troca os escopos por um de servidor", async () => {
+    const erro = await atualizarComoAdmin(`update public.api_tokens set scopes = '["actor:ai_agent"]'::jsonb where id = $ID`);
+    expect(erro?.code, `esperava PT403, veio ${erro?.code}: ${erro?.message}`).toBe("PT403");
+  });
+
+  it("⛔ UPDATE: admin não troca o token_hash do token do agente (tomar a identidade dele)", async () => {
+    const erro = await atualizarComoAdmin(
+      `update public.api_tokens set token_hash = decode(md5('outro'), 'hex'), expires_at = null where id = $ID`,
+    );
+    expect(erro?.code, `esperava PT403, veio ${erro?.code}: ${erro?.message}`).toBe("PT403");
+  });
+
+  it("⛔ UPDATE: token revogado não volta a valer", async () => {
+    const erro = await atualizarComoAdmin(
+      `update public.api_tokens set revoked_at = null, revoked_by = null where id = $ID`,
+      true,
+    );
+    expect(erro?.code, `esperava PT403, veio ${erro?.code}: ${erro?.message}`).toBe("PT403");
+  });
+
+  it("⛔ UPDATE: a revogação não é registrada em nome de outro membro", async () => {
+    const erro = await atualizarComoAdmin(
+      `update public.api_tokens set revoked_at = now(), revoked_by = '${GERENTE}' where id = $ID`,
+    );
+    expect(erro?.code, `esperava PT403, veio ${erro?.code}: ${erro?.message}`).toBe("PT403");
   });
 });

@@ -81,11 +81,9 @@ export const crmListConversations: McpToolDefinition<typeof listInputShape> = {
         limit: input.limit,
         cursor: input.cursor,
       },
+      { contact_id: input.contact_id },
     );
-    let conversations = result.conversations;
-    if (input.contact_id) {
-      conversations = conversations.filter((c) => c.contact_id === input.contact_id);
-    }
+    const conversations = result.conversations;
     // Nomes (dedupe) e posições de fila (1 query cada) — sem N+1 na listagem.
     const names = await resolveUserNames(
       ctx.supabase,

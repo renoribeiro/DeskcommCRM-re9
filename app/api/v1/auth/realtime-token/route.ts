@@ -39,6 +39,8 @@ import type { NextRequest } from "next/server";
 import { ok, fail } from "@/lib/api/wrappers";
 import { checkRateLimit } from "@/lib/ai/dispatcher/rate-limit";
 import { MENSAGEM_MFA_REQUIRED, sessaoDeveProvarSegundoFator } from "@/lib/auth/garantia-da-sessao";
+import { traduzir } from "@/lib/i18n/dicionario";
+import { normalizarIdioma } from "@/lib/i18n/idiomas";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -62,12 +64,17 @@ export async function GET(_req: NextRequest): Promise<Response> {
     return fail("unauthenticated", "Auth required.", 401, { requestId, headers: NO_STORE });
   }
 
+  // Idioma da preferência pessoal, sem a ida ao banco do `loadAuthUser`: esta
+  // rota é chamada a cada aba aberta, e só as duas recusas abaixo o usam.
+  const t = (texto: string) =>
+    traduzir(texto, normalizarIdioma(user.user_metadata?.locale as string | undefined));
+
   // PROVAR (doutrina de MFA): quem tem fator verificado só recebe o token com a
   // sessão `aal2`. O fator vem do `user` do getUser (resposta do GoTrue), e o
   // nível do claim `aal` do mesmo JWT — sem outra ida à rede.
   const { data: aal, error: aalErr } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
   if (sessaoDeveProvarSegundoFator(user, aalErr ? null : aal?.currentLevel)) {
-    return fail("mfa_required", MENSAGEM_MFA_REQUIRED, 403, { requestId, headers: NO_STORE });
+    return fail("mfa_required", t(MENSAGEM_MFA_REQUIRED), 403, { requestId, headers: NO_STORE });
   }
 
   const teto = await checkRateLimit(
@@ -76,7 +83,7 @@ export async function GET(_req: NextRequest): Promise<Response> {
     JANELA_SEGUNDOS,
   );
   if (!teto.allowed) {
-    return fail("rate_limited", "Muitos pedidos de token. Tente em um minuto.", 429, {
+    return fail("rate_limited", t("Muitos pedidos de token. Tente em um minuto."), 429, {
       requestId,
       headers: {
         ...NO_STORE,
