@@ -20,6 +20,7 @@ import {
 } from "@/lib/inbox/rascunho-sugerido";
 import { getQueuePositions } from "@/lib/routing/queue";
 import { resolveUserNames } from "./_users";
+import { tokenNaAuditoria } from "../audit";
 import type { McpToolDefinition } from "../types";
 
 /**
@@ -286,12 +287,17 @@ export const crmCreateConversationDraft: McpToolDefinition<typeof rascunhoInputS
     await audit({
       action: "conversation.draft_created",
       actorUserId: ctx.actor.type === "user" ? ctx.actor.id : null,
-      actorApiTokenId: ctx.apiTokenId,
+      actorApiTokenId: tokenNaAuditoria(ctx).actorApiTokenId,
       organizationId: ctx.organizationId,
       resourceType: "conversation",
       resourceId: input.conversation_id,
       requestId: ctx.requestId,
-      metadata: { draft_id: rascunho.draftId, origem: input.origem, via: "mcp" },
+      metadata: {
+        draft_id: rascunho.draftId,
+        origem: input.origem,
+        via: "mcp",
+        ...tokenNaAuditoria(ctx).metadata,
+      },
     });
     return { draft_id: rascunho.draftId, url: rascunho.url };
   },

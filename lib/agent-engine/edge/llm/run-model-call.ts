@@ -21,7 +21,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 
 import { PONTO_POR_ID } from '@/lib/ai/pontos/registro';
-import { LLM_CALL_TIMEOUT_MS_PADRAO, sinalDaChamadaAoModelo } from '@/lib/ai/tempo-da-chamada';
+import { LLM_TURN_TIMEOUT_MS_PADRAO, sinalDoTurno } from '@/lib/ai/tempo-da-chamada';
 import { scrubMessage } from '@/lib/sentry/scrub';
 
 import type { Logger } from '../../obs/logger';
@@ -511,7 +511,13 @@ async function registrarRecusaDeEnderecoSemChave(d: {
 export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunModelCallInput, deps: RunModelCallDeps = {}) {
   // O knob do raciocínio da DeepSeek entra pela fábrica: `deepseekThinking` só é
   // lido pela fábrica `deepseek`, então os outros provedores não têm como mudar.
-  const registry = deps.registry ?? createDefaultRegistry({ deepseekThinking: cfg.deepseekThinking });
+  const registry =
+    deps.registry ??
+    createDefaultRegistry({
+      deepseekThinking: cfg.deepseekThinking,
+      // O teto POR REQUISIÇÃO vai no `fetch` de cada fábrica (LLM_CALL_TIMEOUT_MS).
+      ...(cfg.llmCallTimeoutMs !== undefined ? { llmCallTimeoutMs: cfg.llmCallTimeoutMs } : {}),
+    });
   const purpose = input.purpose ?? 'agent_turn';
 
   // A config da org é lida ANTES da decisão porque o resolvedor precisa dela
@@ -658,13 +664,13 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
 
   const startedAt = Date.now();
   let result: Awaited<ReturnType<typeof generateText>>;
-  // Nunca sem teto: o sinal de quem chamou (quando há) é combinado com o
-  // `LLM_CALL_TIMEOUT_MS` da config. Um provedor que aceita a conexão e não
-  // responde prendia o turno e a fila inteira atrás dele.
-  const abortSignal = sinalDaChamadaAoModelo(
-    cfg.llmCallTimeoutMs ?? LLM_CALL_TIMEOUT_MS_PADRAO,
-    input.abortSignal,
-  );
+  // Nunca sem teto, e em DOIS níveis. Este sinal é o do TURNO inteiro
+  // (`LLM_TURN_TIMEOUT_MS`: passos + ferramentas), combinado com o de quem
+  // chamou. O de cada requisição HTTP (`LLM_CALL_TIMEOUT_MS`) mora no `fetch`
+  // do provedor (`createDefaultRegistry`). Com um sinal só de 90 s cobrindo o
+  // turno, um turno legítimo de vários passos com ferramentas no meio era
+  // abortado sem que nenhuma requisição tivesse travado.
+  const abortSignal = sinalDoTurno(cfg.llmTurnTimeoutMs ?? LLM_TURN_TIMEOUT_MS_PADRAO, input.abortSignal);
   try {
     input.abortSignal?.throwIfAborted();
     // `system` aceita SystemModelMessage (com providerOptions de cache) — igual

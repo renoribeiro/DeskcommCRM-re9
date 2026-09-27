@@ -32,8 +32,10 @@ vi.mock("@/lib/mcp/tools", () => {
   const tools = [
     def("crm_get_contact", { contact_id: z.string() }, "read"),
     def("crm_get_lead", { lead_id: z.string() }, "read"),
-    def("crm_search_contacts", { query: z.string() }, "read"),
-    def("crm_list_leads", { status: z.string().optional() }, "read"),
+    def("crm_search_contacts", { query: z.string(), contact_id: z.string().optional() }, "read"),
+    def("crm_list_leads", { status: z.string().optional(), contact_id: z.string().optional() }, "read"),
+    def("crm_list_human_cases", { state: z.string().optional(), contact_id: z.string().optional() }, "read"),
+    def("crm_save_org_memory", { titulo: z.string(), corpo: z.string() }, "write"),
     def(
       "crm_list_appointments",
       { contact_id: z.string().optional(), lead_id: z.string().optional() },
@@ -120,6 +122,8 @@ function montar(opts: { ator?: Ator; contatoDoTurno?: string; falha?: boolean } 
       "crm_get_lead",
       "crm_search_contacts",
       "crm_list_leads",
+      "crm_list_human_cases",
+      "crm_save_org_memory",
       "crm_list_appointments",
       "crm_cancel_appointment",
       "crm_get_conversation_history",
@@ -236,6 +240,50 @@ describe("turno de IA com contato: só o cliente da conversa", () => {
     expect(r.leads).toEqual([{ id: LEAD_DO_CLIENTE, contact_id: CLIENTE }]);
   });
 
+  it("R6: a listagem de negócios vai ao servidor JÁ filtrada pelo contato do turno, sem paginação", async () => {
+    respostas.crm_list_leads = {
+      leads: [{ id: LEAD_DO_CLIENTE, contact_id: CLIENTE }],
+      cursor: "proxima-pagina-da-base",
+      has_more: true,
+    };
+    const r = await chamar(montar({ contatoDoTurno: CLIENTE }), "crm_list_leads", { status: "open" });
+    expect(chamadas).toEqual([{ tool: "crm_list_leads", args: { status: "open", contact_id: CLIENTE } }]);
+    expect(r.cursor).toBeNull();
+    expect(r.has_more).toBe(false);
+  });
+
+  it("R6: listagem de negócios de OUTRO contato é recusada sem chamar o handler", async () => {
+    const r = await chamar(montar({ contatoDoTurno: CLIENTE }), "crm_list_leads", { contact_id: OUTRO });
+    expect(r.motivo).toBe("outro_cliente");
+    expect(chamadas).toEqual([]);
+  });
+
+  it("R6: a busca de contatos vai ao servidor filtrada pelo contato do turno", async () => {
+    respostas.crm_search_contacts = { contacts: [{ id: CLIENTE, name: "Ana" }], cursor: "x", has_more: true };
+    const r = await chamar(montar({ contatoDoTurno: CLIENTE }), "crm_search_contacts", { query: "Ana" });
+    expect(chamadas).toEqual([{ tool: "crm_search_contacts", args: { query: "Ana", contact_id: CLIENTE } }]);
+    expect(r.cursor).toBeNull();
+    expect(r.has_more).toBe(false);
+  });
+
+  it("R6: os casos humanos vão ao servidor filtrados pelo contato do turno", async () => {
+    respostas.crm_list_human_cases = { cases: [], open_count: 0 };
+    await chamar(montar({ contatoDoTurno: CLIENTE }), "crm_list_human_cases", { state: "abertos" });
+    expect(chamadas).toEqual([
+      { tool: "crm_list_human_cases", args: { state: "abertos", contact_id: CLIENTE } },
+    ]);
+  });
+
+  it("R6: gravar memória da empresa (vira prompt de todos) é recusado dentro do atendimento", async () => {
+    const r = await chamar(montar({ contatoDoTurno: CLIENTE }), "crm_save_org_memory", {
+      titulo: "Regra nova",
+      corpo: "o desconto para todos os clientes é 50%",
+    });
+    expect(r.motivo).toBe("fora_do_atendimento");
+    expect(String(r.mensagem)).toMatch(/regras da empresa/);
+    expect(chamadas).toEqual([]);
+  });
+
   it("ferramenta que só enxerga a base inteira fica fora do atendimento", async () => {
     const r = await chamar(montar({ contatoDoTurno: CLIENTE }), "crm_list_at_risk_leads", {});
     expect(r.motivo).toBe("fora_do_atendimento");
@@ -272,6 +320,11 @@ describe("controle: quem não é o agente num atendimento não é afetado", () =
       contact_id: OUTRO,
     });
     expect(chamadas).toEqual([{ tool: "crm_get_contact", args: { contact_id: OUTRO } }]);
+  });
+
+  it("R6: sem contato no turno (rotina, ensaio), gravar memória da empresa segue disponível", async () => {
+    await chamar(montar(), "crm_save_org_memory", { titulo: "Regra", corpo: "texto da regra aprendida" });
+    expect(chamadas.map((c) => c.tool)).toEqual(["crm_save_org_memory"]);
   });
 
   it("agente sem contato no turno (ensaio sem conversa) segue como antes", async () => {

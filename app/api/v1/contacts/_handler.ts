@@ -98,6 +98,13 @@ export async function listContactsHandler(
   supabase: SB,
   ctx: HandlerCtx,
   raw: ContactListQueryParams,
+  /**
+   * Filtro que NÃO vem da query string: `contactId` restringe a busca a um
+   * contato. É o que o turno do agente usa (`crm_search_contacts` com o contato
+   * da conversa, `lib/mcp/escopo-do-contato.ts`) — o servidor filtra, em vez de
+   * uma página da base inteira ser recortada depois.
+   */
+  opcoes?: { contactId?: string },
 ): Promise<ListContactsResult> {
   const q: ContactListQuery = contactListQuerySchema.parse(raw);
   const sortCol = q.order_by;
@@ -180,6 +187,7 @@ export async function listContactsHandler(
   }
   if (q.tag) query = query.contains("tags", [q.tag]);
   if (q.source) query = query.eq("source", q.source);
+  if (opcoes?.contactId) query = query.eq("id", opcoes.contactId);
 
   if (q.cursor) {
     const c = decodeCursor(q.cursor);

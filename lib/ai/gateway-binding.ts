@@ -27,6 +27,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel } from "ai";
 
 import { DEEPSEEK_ENDPOINT, REQUESTY_ENDPOINT } from "@/lib/agent-engine/edge/llm/providers";
+import { fetchComTetoPorRequisicao } from "@/lib/ai/tempo-da-chamada";
 import { fetchParaDestinoDaOrganizacao } from "@/lib/automation/destinos-internos-autorizados";
 import { decryptKey, byteaToBuffer } from "@/lib/crypto/aes_gcm";
 import { logger } from "@/lib/logger";
@@ -528,9 +529,13 @@ async function decifrarChave(
   }
 }
 
-/** `fetch` com a régua de destino da organização, quando o endereço é dela. */
-function guardaDeDestino(baseUrl: string | null): { fetch?: typeof fetch } {
-  return baseUrl ? { fetch: fetchParaDestinoDaOrganizacao() } : {};
+/**
+ * O `fetch` do provedor: sempre com o teto POR REQUISIÇÃO (`LLM_CALL_TIMEOUT_MS`,
+ * `lib/ai/tempo-da-chamada.ts`) e, quando o endereço é de uma organização, com a
+ * régua de destino dela por dentro.
+ */
+function fetchDoProvedor(baseUrl: string | null): typeof fetch {
+  return fetchComTetoPorRequisicao(baseUrl ? fetchParaDestinoDaOrganizacao() : undefined);
 }
 
 /**
@@ -548,11 +553,11 @@ export function instanciar(
 ): LanguageModel | null {
   switch (provider) {
     case "anthropic":
-      return createAnthropic({ apiKey })(modelId);
+      return createAnthropic({ apiKey, fetch: fetchDoProvedor(null) })(modelId);
     case "openai":
-      return createOpenAI({ apiKey })(modelId);
+      return createOpenAI({ apiKey, fetch: fetchDoProvedor(null) })(modelId);
     case "google":
-      return createGoogleGenerativeAI({ apiKey })(modelId);
+      return createGoogleGenerativeAI({ apiKey, fetch: fetchDoProvedor(null) })(modelId);
     // `base_url` do painel é escolha de uma ORGANIZAÇÃO (auditoria P4,
     // `docs/imobiliario/04-…`): quando ele vem, o `fetch` do SDK passa pela
     // régua de destino a CADA chamada, como no `custom` abaixo — senão a chave
@@ -562,7 +567,7 @@ export function instanciar(
       return createOpenAI({
         apiKey,
         baseURL: baseUrl ?? OPENROUTER_BASE_URL,
-        ...guardaDeDestino(baseUrl),
+        fetch: fetchDoProvedor(baseUrl),
       }).chat(modelId); // ver providers.ts
     // A DeepSeek fala a API da OpenAI. Sem este caso, uma organização em
     // DeepSeek cairia no `default` (null) e a pilha antiga seguiria para o
@@ -571,13 +576,13 @@ export function instanciar(
       return createOpenAI({
         apiKey,
         baseURL: baseUrl ?? DEEPSEEK_ENDPOINT,
-        ...guardaDeDestino(baseUrl),
+        fetch: fetchDoProvedor(baseUrl),
       })(modelId);
     case "requesty":
       return createOpenAI({
         apiKey,
         baseURL: baseUrl ?? REQUESTY_ENDPOINT,
-        ...guardaDeDestino(baseUrl),
+        fetch: fetchDoProvedor(baseUrl),
       }).chat(modelId); // ver providers.ts
     // Provedor personalizado (#1642): endpoint do operador. Sem `baseUrl` não
     // há onde ir — `null` deixa o chamador cair no padrão COM AVISO, que é o
@@ -585,7 +590,7 @@ export function instanciar(
     // gateway para outro lugar.
     case "custom":
       return baseUrl
-        ? createOpenAI({ apiKey, baseURL: baseUrl, fetch: fetchParaDestinoDaOrganizacao() }).chat(modelId)
+        ? createOpenAI({ apiKey, baseURL: baseUrl, fetch: fetchDoProvedor(baseUrl) }).chat(modelId)
         : null;
     default:
       return null;

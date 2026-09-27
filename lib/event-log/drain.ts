@@ -213,9 +213,18 @@ export async function drainEventLog(
   // Uma tentativa a mais por evento envenenado é o preço de não tirar do órfão
   // legítimo a volta imediata que ele sempre teve.
   //
-  // Um por um, com o guarda `status = 'processing'`: duas instâncias do dreno
-  // (o laço do worker e o cron do app) podem ler a mesma linha presa, e só a
-  // primeira a tocar incrementa — a segunda encontra `pending` e não faz nada.
+  // Um por um, com o guarda da LINHA EXATA que foi lida como presa: `status =
+  // 'processing'`, o MESMO `attempts` e `updated_at` ainda além da janela. Duas
+  // instâncias do dreno (o laço do worker e o cron do app) podem ler a mesma
+  // linha presa, e só a primeira a tocar incrementa.
+  //
+  // O guarda de `status` sozinho NÃO bastava: entre a leitura da instância Y e
+  // o update dela, a instância Z devolve o preso à fila (attempts+1) e X o
+  // reclama de novo — a linha volta a ser `processing`, agora com uma posse
+  // fresca. O update de Y casava com ela e devolvia à fila o claim VIVO de X:
+  // o evento rodava de novo em paralelo. `attempts` é a posse (ver o claim
+  // abaixo) e `updated_at` é o instante do claim; com os dois no filtro, o
+  // reaper só alcança o claim velho que de fato leu.
   let reclamados = 0;
   for (const preso of presos ?? []) {
     const attempts = preso.attempts + 1;
@@ -235,6 +244,8 @@ export async function drainEventLog(
       })
       .eq("id", preso.id)
       .eq("status", "processing")
+      .eq("attempts", preso.attempts)
+      .lt("updated_at", limiteDePresos)
       .select("id");
     if (!tocado?.length) continue;
     reclamados += 1;

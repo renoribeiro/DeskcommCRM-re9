@@ -20,6 +20,7 @@ import {
   type PontoDeEmbedding,
 } from "@/lib/ai/embeddings/chave";
 import { gatewayHeaders, type ModelId } from "@/lib/ai/gateway";
+import { fetchComTetoPorRequisicao, sinalDeUmaChamada } from "@/lib/ai/tempo-da-chamada";
 import { fetchParaDestinoDaOrganizacao } from "@/lib/automation/destinos-internos-autorizados";
 
 export interface EmbedOptions {
@@ -84,9 +85,9 @@ export async function embedText(
         // `baseUrl` vem do binding do painel — escolha de uma ORGANIZAÇÃO
         // (auditoria P4, `docs/imobiliario/04-…`): o `fetch` do SDK passa
         // pela régua de destino a cada chamada, e redirect não é seguido.
-        ...(chave.baseUrl
-          ? { baseURL: chave.baseUrl, fetch: fetchParaDestinoDaOrganizacao() }
-          : {}),
+        // Por fora de tudo, o teto por requisição (LLM_CALL_TIMEOUT_MS).
+        ...(chave.baseUrl ? { baseURL: chave.baseUrl } : {}),
+        fetch: fetchComTetoPorRequisicao(chave.baseUrl ? fetchParaDestinoDaOrganizacao() : undefined),
       }).textEmbeddingModel(modelId.replace(/^openai\//, ""));
 
   const result = await embed({
@@ -95,6 +96,11 @@ export async function embedText(
     headers: chave.viaGateway
       ? gatewayHeaders({ organizationId: opts.organizationId })
       : undefined,
+    // Teto de tempo (LLM_CALL_TIMEOUT_MS): o embedding roda DENTRO do turno do
+    // agente (busca de conhecimento) e da indexação — um provedor travado aqui
+    // prendia os dois. Pelo gateway não há `fetch` nosso, então o sinal é quem
+    // garante o teto nos dois caminhos.
+    abortSignal: sinalDeUmaChamada(),
   });
 
   // Dimensão asserida a cada chamada: divergir de modelo quebra o recall em
