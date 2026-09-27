@@ -1,773 +1,709 @@
 ---
 type: plan
-project: DeskcommCRM (fork re9 — vertical imobiliário)
-status: proposta — aguarda as decisões da §11
+project: ImobCRM (fork re9 do DeskcommCRM — vertical imobiliário de VENDA)
+status: aprovado em direção — decisões do dono registradas na §0 (27/09/2026)
 last_updated: 2026-09-27
 base: auditoria em 01-auditoria.md (HEAD 38dd469)
 ---
 
-# Plano: DeskcommCRM Imobiliário
+# Plano: ImobCRM
 
-> **Objetivo:** transformar o DeskcommCRM num **sistema operacional de vendas e locação
-> imobiliária com agentes de IA nativos no WhatsApp**. Ele deve servir imobiliárias, corretores
-> autônomos, incorporadoras/lançamentos e administradoras de locação, cobrindo todas as
-> particularidades do mercado brasileiro.
+> **Objetivo:** transformar o DeskcommCRM no **ImobCRM**, um SaaS de **vendas imobiliárias com
+> agentes de IA nativos no WhatsApp**. Ele cobre toda a jornada, do lead do portal até as chaves,
+> com estoque próprio, publicação no Grupo OLX e no Imovelweb, e compliance do setor.
 >
-> Este plano deriva da auditoria em [`01-auditoria.md`](01-auditoria.md). Cada épico diz **o que
-> reaproveitar** (arquivo real do repositório) e **o que construir**.
+> Base: a auditoria em [`01-auditoria.md`](01-auditoria.md). Cada épico diz **o que reaproveitar**
+> (arquivo real do repositório) e **o que construir**.
+
+---
+
+## 0. Decisões do dono do produto (27/09/2026)
+
+| # | Decisão | Consequência no plano |
+|---|---|---|
+| 1 | **Só venda** (sem locação) | Sai do escopo: locação, administração, cobrança de aluguel, repasse, reajuste, garantias locatícias e Lei do Inquilinato. Os funis são **Venda** e **Captação**. **Lançamentos** ficam como fase opcional (§8), porque também são venda |
+| 2 | **Acompanhar o upstream** | Fork vivo: merge periódico de `melgarafael/DeskcommCRM` e código imobiliário isolado (§2) |
+| 3 | **SaaS** | A RE9 opera **uma plataforma multi-imobiliária**. Entram cadastro público com teste grátis, planos e limites, cobrança da assinatura, domínio próprio da vitrine, operação 24/7 (backup, monitoramento, escala) e contrato de operador LGPD. O kit self-host deixa de ser prioridade |
+| 4 | **Nome: ImobCRM** | Vem do banco (`platform_branding`), sem nome no código (`tests/unit/branding.test.ts`) |
+| 5 | **Sem ERP; o ImobCRM é o sistema principal** | O **cadastro de imóveis entra na fase 1**. A ponte com ERP (`banco_externo`) e a importação de ERP deixam de ser prioridade. Fica só a importação por planilha/XML para quem troca de sistema |
+| 6 | **Portais: Grupo OLX e Imovelweb** | Entrada de leads e saída de feed XML só desses dois na primeira onda |
+| 7 | **Soluções open source ou sem custo** | Stack da §2.4: DocuSeal (assinatura), MapLibre + OpenFreeMap (mapa), BrasilAPI/ViaCEP/Nominatim (CEP e geocodificação), BCB SGS (índices e taxas), `@react-pdf/renderer` (PDF, já no projeto), Web Push (já no projeto), MinIO (armazenamento, se sair do Supabase) |
+| 8 | **Piloto: RE9 Imob** | A imobiliária do próprio dono é a primeira organização. As conversas reais dela formam o corpus de avaliação do agente |
 
 ---
 
 ## Sumário
 
 1. [Tese do produto](#1-tese-do-produto)
-2. [Decisão de arquitetura](#2-decisão-de-arquitetura)
+2. [Arquitetura](#2-arquitetura)
 3. [Modelo de domínio](#3-modelo-de-domínio)
 4. [O agente de IA imobiliário](#4-o-agente-de-ia-imobiliário)
 5. [Épicos](#5-épicos)
 6. [Compliance e regulação](#6-compliance-e-regulação)
-7. [Métricas do negócio imobiliário](#7-métricas-do-negócio-imobiliário)
-8. [Roadmap faseado](#8-roadmap-faseado)
+7. [Métricas do negócio](#7-métricas-do-negócio)
+8. [Roadmap](#8-roadmap)
 9. [Riscos e mitigação](#9-riscos-e-mitigação)
 10. [Definição de pronto do vertical](#10-definição-de-pronto-do-vertical)
-11. [Decisões que dependem do dono do produto](#11-decisões-que-dependem-do-dono-do-produto)
+11. [Decisões ainda em aberto](#11-decisões-ainda-em-aberto)
 12. [Apêndice: telas — manter, adaptar e esconder](#12-apêndice-telas--manter-adaptar-e-esconder)
 
 ---
 
 ## 1. Tese do produto
 
-### 1.1 O problema do mercado
+### 1.1 O problema
 
-O mercado imobiliário brasileiro vende pelo WhatsApp. Mas a operação típica tem cinco problemas:
+Imobiliárias de venda perdem negócio em cinco pontos:
 
-1. **Lead de portal esfria em minutos.** ZAP, VivaReal e OLX entregam o lead para várias
-   imobiliárias ao mesmo tempo, e quem responde primeiro leva. O tempo médio de resposta do
-   mercado se mede em horas.
-2. **O estoque vive fora do CRM**, num ERP (Vista, Jetimob, Kenlo, Imobzi) ou numa planilha. O
-   corretor não sabe na hora o que oferecer.
-3. **O corretor é o dono do relacionamento.** Quando ele sai, a carteira sai com ele.
-4. **O ciclo é longo** (30 a 180 dias na venda) e cheio de etapas documentais: visita, proposta,
-   contraproposta, documentação, financiamento, contrato, escritura e chaves.
-5. **A regulação é específica:** CRECI, COAF/PLD, Lei do Inquilinato, LGPD sobre documentos
-   pessoais e DIMOB.
+1. **Lead de portal esfria em minutos.** O Grupo OLX e o Imovelweb entregam o mesmo lead para
+   várias imobiliárias, e quem responde primeiro, com o imóvel certo, leva.
+2. **O corretor não sabe o que oferecer.** O estoque está numa planilha ou na cabeça do captador.
+3. **A carteira é do corretor, não da empresa.** Quando ele sai, os clientes saem com ele.
+4. **O ciclo é longo** (30 a 180 dias) e documental: visita → proposta → contraproposta →
+   documentação e financiamento → contrato → escritura → chaves.
+5. **A regulação é específica:** CRECI na publicidade, COAF/PLD, LGPD sobre documentos pessoais e
+   DIMOB.
 
-### 1.2 A proposta
+### 1.2 A proposta do ImobCRM
 
 | Pilar | Na prática |
 |---|---|
-| **Resposta em segundos, 24/7** | O agente de IA responde o lead do portal na hora, qualifica (finalidade, região, faixa, quartos, financiamento/FGTS), **busca no estoque real**, envia fotos, vídeo e localização, e **agenda a visita na agenda do corretor certo** |
-| **Estoque dentro do CRM** | Cadastro de imóveis e empreendimentos com fotos, mapa e códigos. Publicação automática nos portais por feed XML. Importação do ERP atual |
-| **Match contínuo** | Cada imóvel novo ou com redução de preço é cruzado com todos os perfis de busca ativos, e a IA propõe o contato (com aprovação humana) |
-| **Carteira da empresa, não do corretor** | Todo histórico fica no CRM. A roleta distribui leads com SLA. A gestão vê tudo por equipe |
-| **Do lead às chaves** | Visita → proposta → documentação → contrato → comissão, com checklists, prazos e PDFs |
-| **Compliance embutido** | CRECI nas saídas, trilha COAF, LGPD por titular e retenção legal |
+| **Resposta em segundos, 24/7** | A IA responde o lead do portal na hora e qualifica (região, faixa, quartos, financiamento/FGTS). Ela **busca no estoque real**, envia fotos, vídeo e localização, e **agenda a visita** com o corretor certo |
+| **Estoque no centro** | Cadastro de imóveis com fotos, mapa e códigos, publicado automaticamente no Grupo OLX e no Imovelweb e na vitrine própria |
+| **Match contínuo** | Cada imóvel novo ou com preço reduzido é cruzado com todos os perfis de busca, e a IA propõe o contato (com aprovação humana) |
+| **Carteira da empresa** | Todo histórico fica no CRM. A roleta de leads tem prazo de resposta, e a gestão acompanha por equipe |
+| **Do lead às chaves** | Visita, proposta, documentos, contrato com assinatura eletrônica e comissão rateada |
+| **Compliance embutido** | CRECI em toda saída, trilha COAF, LGPD por titular com retenção legal |
 
-### 1.3 Público e personas
+### 1.3 Personas
 
-| Persona | O que precisa | Papel no sistema |
+| Persona | Precisa de | Papel |
 |---|---|---|
-| **Dono/diretor da imobiliária** | VGV, conversão, custo por lead por portal, produtividade por corretor | `admin` |
-| **Gerente de vendas/locação** | Distribuir leads, cobrar SLA, ver a equipe, aprovar propostas | `manager` com escopo de equipe (novo) |
+| **Dono/diretor** | VGV, conversão, custo por lead por portal, produtividade | `admin` |
+| **Gerente de vendas** | Distribuir, cobrar prazo, ver a equipe, aprovar proposta | `manager` com escopo de equipe (novo) |
 | **Corretor** | Leads do dia, agenda de visitas, imóveis para enviar, app no celular | `agent` |
 | **Captador** | Proprietários, avaliações, autorizações, fotos | `agent` com papel de captação |
-| **Corretor parceiro / imobiliária parceira** | Ver só os leads e as unidades compartilhados | papel externo (fase 5) |
-| **Proprietário / inquilino** | Status do imóvel, extrato, boletos | portal externo (fase 5) |
 | **Agente de IA** | Estoque, agenda, funil e regras de promessa | `ai_operator` (já existe) |
+| **Operador da plataforma (RE9)** | Clientes, planos, cobrança, saúde, suporte | `platform_admin` (já existe) |
 
-**Segmentos atendidos**, na ordem recomendada:
-
-1. Imobiliária de venda e locação de usados (maior volume).
-2. Corretor autônomo.
-3. Incorporadora ou imobiliária de lançamentos.
-4. Administradora de locação.
+Público-alvo: primeiro imobiliárias de usados (2 a 50 corretores) e corretores autônomos. Depois,
+imobiliárias de lançamentos (fase opcional).
 
 ---
 
-## 2. Decisão de arquitetura
+## 2. Arquitetura
 
-### 2.1 As três opções
+### 2.1 Fork vivo com domínio isolado
 
-| Opção | Como é | Prós | Contras |
-|---|---|---|---|
-| **A. Hard fork** | Reescrever o núcleo para imobiliário e parar de acompanhar o upstream | Liberdade total | Perde as correções de segurança, WAHA e IA do upstream (~2 versões/dia). Todo o harness (1.500 testes, CI e kit) vira custo exclusivo seu |
-| **B. Extensão declarativa** | Pacote JSON no catálogo de extensões | Zero conflito | **Impossível.** Extensão não cria tabela, tela, menu nem ferramenta de IA (`docs/doctrine/extensoes.md`) |
-| **C. Fork vivo + módulo oficial `imobiliario` + ganchos genéricos no núcleo** ⭐ | O domínio imobiliário mora em pastas e funções próprias, com tabelas criadas pela função provisionadora da ADR-0002. As melhorias genéricas (roleta de lead, gatilho recorrente, equipes) entram no núcleo e podem ser devolvidas ao upstream | Recebe tudo do upstream com `git merge`. O conflito fica confinado. Segue a doutrina | Exige disciplina de pastas e numeração de migrations |
+O código imobiliário mora em pastas próprias. O motor (canal, IA, agenda, governança, LGPD)
+continua vindo do upstream por `git merge`, nunca rebase.
 
-### 2.2 Recomendação: opção C
-
-Ela entrega um produto **100% imobiliário para o usuário final**: marca própria, menu, onboarding,
-vocabulário e agente são todos imobiliários. Ao mesmo tempo, **preserva o motor** que o upstream
-continua melhorando de graça.
-
-**Regras de isolamento:**
-
-| Camada | Onde mora o código imobiliário |
+| Camada | Onde |
 |---|---|
-| Domínio (TS puro) | `lib/imobiliario/**` (imóveis, match, financiamento, comissão, portais, locação) |
-| Telas | `app/app/imoveis/**`, `app/app/captacao/**`, `app/app/lancamentos/**`, `app/app/locacao/**`, `app/app/propostas/**`, `app/app/contratos/**` |
+| Domínio (TS puro) | `lib/imobiliario/**`: imóveis, match, financiamento, comissão, portais, ACM |
+| Telas | `app/app/imoveis/**`, `app/app/captacao/**`, `app/app/propostas/**`, `app/app/contratos/**`, `app/app/comissoes/**` |
 | Componentes | `components/imobiliario/**` |
-| API | `app/api/v1/imoveis/**`, `app/api/v1/portais/**` etc. |
-| Ferramentas de IA | `lib/mcp/tools/imoveis.ts` + `lib/mcp/tools/catalogo/imoveis.ts`, marcadas com `modulo: "imobiliario"` |
-| Schema | uma função `public.fn_imobiliario_provisionar()` (ADR-0002, D2–D8), entregue pela tripla migration + apêndice + MANIFEST |
-| Liga/desliga | `lib/instalacao/modulos.ts` ganha `imobiliario`. Na **distribuição re9**, o kit instala o módulo por padrão |
-| Testes | `tests/unit/imobiliario/**`, `tests/invariants/imobiliario-*.test.ts`, `tests/e2e/imob-*.spec.ts` |
+| API | `app/api/v1/imoveis/**`, `app/api/v1/portais/**`, `app/api/v1/feeds/**` |
+| Vitrine pública | `app/(site)/**` |
+| Ferramentas de IA | `lib/mcp/tools/imoveis.ts` + `lib/mcp/tools/catalogo/imoveis.ts` |
+| Assinatura SaaS | `lib/saas/**`, `app/(admin)/**` (console da RE9) |
+| Testes | `tests/unit/imobiliario/**`, `tests/invariants/imob-*.test.ts`, `tests/e2e/imob-*.spec.ts` |
 
-**Ganchos genéricos no núcleo** (úteis a qualquer nicho; candidatos a PR no upstream para reduzir
-a divergência):
+**Schema.** Como o ImobCRM **é** imobiliário e roda como SaaS de uma instalação só, as tabelas
+imobiliárias entram pela **tripla normal**: migration + apêndice idempotente do `baseline.sql` +
+MANIFEST. A função provisionadora da ADR-0002 servia para instalações que não queriam o módulo, e
+esse caso não existe aqui.
 
-- Roleta de **lead** com pool, critérios e SLA com repasse.
-- **Equipes** (`teams`) e escopo de gerente por equipe.
-- **Gatilho de data recorrente** (mensal/anual) e **condições numéricas** nas automações.
-- **Filtro de campanha por campo personalizado.**
-- **Página pública de agendamento** (já prevista no vocabulário como `public_page`).
-- **`vocabulary` aplicado em toda a interface.**
-- **Repositório de documentos** com bucket privado, classificação e retenção legal.
-- **Normalizadores de captação** para Meta Lead Ads e Google Lead Forms.
-- **Envio de vídeo, arquivo e localização** pelo agente, dentro da cadeia de guardrails.
-- **Validação de tipo dos campos personalizados** (hoje só a presença é cobrada).
+Para reduzir conflito com o upstream:
 
-### 2.3 Infraestrutura do fork (épico E0)
+- as migrations do fork usam o **slug com prefixo `imob_`** e uma **faixa de NNNN própria**
+  (a partir de 5000);
+- o apêndice imobiliário fica num **bloco único e contíguo** no fim do `baseline.sql`;
+- `scripts/migration-populacao.sh` e o guarda de colisão passam a medir contra o fork **e** o
+  upstream.
 
-1. Adicionar o remoto `upstream` e merge semanal de `upstream/main` (nunca rebase), com a skill
-   `deskcomm-contribuir` para medir antes.
-2. **Numeração de migrations.** Reservar uma faixa própria para o fork, por exemplo slug com prefixo
-   `imob_` e NNNN acima de 5000, e ajustar `scripts/migration-populacao.sh` e o guarda de colisão
-   para medir contra o próprio fork **e** contra o upstream.
-3. **Imagens e kit.** Trocar `IMG_NS` em `hostgator-setup-kit/_common.sh`, as referências
-   `github.com/melgarafael/...` em `install.sh`, `comecar.sh` e `docker-compose.prod.yml`, e ajustar
-   `tests/unit/namespace-das-imagens.test.ts`. Tornar públicos os pacotes GHCR do fork.
-4. **Versão.** Adotar uma linha própria sem hífen (o kit descarta prerelease com `-`), por exemplo
-   `2.x` própria que registre a base do upstream no changelog. O `release.yml` hoje só corta tag
+**Ganchos genéricos** úteis a qualquer nicho vão para o núcleo e podem ser devolvidos ao upstream
+por PR, o que diminui a divergência:
+
+- roleta de **lead** com critérios e prazo de resposta com repasse;
+- equipes;
+- gatilho recorrente e condição numérica nas automações;
+- filtro de campanha por campo personalizado;
+- página pública de agendamento;
+- `vocabulary` aplicado em toda a interface;
+- repositório de documentos com retenção legal;
+- Meta Lead Ads;
+- envio de vídeo, arquivo e localização pelo agente;
+- validação de tipo dos campos personalizados.
+
+### 2.2 Arquitetura SaaS
+
+| Tema | Decisão |
+|---|---|
+| **Tenancy** | Uma instalação e N imobiliárias, cada uma uma `organization`. O RLS com teste de isolamento já existe e continua obrigatório |
+| **Hospedagem** | Produção: app, worker e scheduler em containers (VPS dedicada ou cluster) atrás do Caddy, com Supabase gerenciado (plano Pro: backups diários, PITR opcional, sem pausa). Staging idêntico, com dados sintéticos |
+| **Domínios** | `app.<dominio-imobcrm>` para o CRM. Vitrine em `<imobiliaria>.<dominio-imobcrm>` ou **domínio próprio do cliente**, com TLS automático pelo **on-demand TLS do Caddy** (gratuito, Let's Encrypt), liberado por um endpoint `ask` que confere o domínio na tabela |
+| **Cadastro** | Cadastro público com teste grátis (14 dias), sobre o fluxo que já existe (`registration_requests`, `lib/auth/registration-requests.ts`), sem aprovação manual quando o plano for self-service. O onboarding aplica o **kit imobiliário** (E1) |
+| **Planos e limites** | Tabela `saas_plans` com limites (corretores, imóveis ativos, números de WhatsApp, créditos de IA, GB de fotos, portais) e `saas_subscriptions` por organização. Os limites são aplicados no servidor, e o bloqueio por inadimplência usa a tela `app/account-suspended` (já existe) |
+| **Cobrança da assinatura** | Pix e boleto emitidos pela **API do banco PJ da RE9** (Banco Inter e Efí oferecem cobrança Pix com tarifa zero ou baixa para PJ; conferir a tarifa atual). Webhook de baixa. A régua de cobrança pelo WhatsApp e por e-mail usa os follow-ups e campanhas existentes. A lógica de planos é código próprio e simples; não é preciso um motor de billing de terceiros no começo |
+| **WhatsApp** | Dois caminhos por cliente: **API oficial da Meta** (Cloud API, já suportada em `lib/channels/meta`; sem custo de licença e mais estável para SaaS, com custo por conversa pago na conta Meta do cliente) ou **WAHA** (QR). O WAHA Plus é licenciado por instalação; conferir o custo e o limite de sessões. Recomendação: API oficial como padrão para clientes novos e WAHA como alternativa |
+| **IA** | Ver a decisão em aberto na §11. O controle de gasto por organização já existe (`ai_budgets`) |
+| **Armazenamento** | Supabase Storage no começo. Quando fotos passarem de algumas centenas de GB, **MinIO** (S3 open source) ou Cloudflare R2 (sem taxa de saída). Fotos convertidas para WebP ≤ 300 KB no upload |
+| **Observabilidade** | Sentry (já integrado; plano gratuito ou self-host) + uptime externo. A Central de avisos do produto é o laço de retorno para o cliente |
+| **Deploy** | CI publica as imagens do fork no GHCR, deploy em staging e depois em produção. Migrations aplicadas pelo `baseline.sql` idempotente ou pela cadeia de migrations com backup antes. Rollback por imagem anterior |
+| **LGPD de SaaS** | A RE9 é **operadora**, e cada imobiliária é **controladora** dos seus leads. Precisa de termos de uso, DPA (acordo de tratamento de dados), lista de suboperadores (Supabase, Meta, provedor de IA) e canal do DPO. O PDF de LGPD já nomeia o controlador e não a marca (`lib/legal/operador.ts`) |
+
+### 2.3 Fundação do fork (épico E0)
+
+1. Remoto `upstream` e rotina de merge a cada 1–2 semanas, sempre com a suíte completa verde antes
+   de publicar.
+2. Faixa de migrations (§2.1).
+3. **Imagens próprias:** `publish-image.yml` já publica em `ghcr.io/${owner}`. Ajustar
+   `docker-compose.prod.yml`, `hostgator-setup-kit/_common.sh:1271` e
+   `tests/unit/namespace-das-imagens.test.ts`.
+4. **Versão própria sem hífen** (o kit descarta prerelease com `-`): por exemplo, linha `1.x`
+   própria do ImobCRM, registrando a base do upstream no CHANGELOG. `release.yml:479` só corta tag
    no repositório do upstream e precisa ser ajustado.
-5. **Branch protection** com os mesmos cinco checks obrigatórios.
-6. **Marca própria** por banco (`/admin/marca`): nome, logo e cor. **Nenhuma marca no código**
-   (`tests/unit/branding.test.ts`).
+5. **Proteção da branch `main`** com os cinco checks obrigatórios.
+6. **Marca ImobCRM** configurada no banco (nome, logo, cor, e-mail remetente).
+7. **Ambientes:** staging e produção, backup automático testado com restauração mensal.
 
-### 2.4 Escolhas técnicas centrais
+### 2.4 Stack técnica — open source ou sem custo
 
-| Tema | Escolha | Por quê |
-|---|---|---|
-| Geolocalização | `latitude`/`longitude` `numeric(9,6)` + índice + função haversine em SQL. PostGIS fica como evolução opcional | PostGIS exige mudança de imagem e de kit. Busca por raio e por caixa resolve 95% dos casos |
-| Busca de imóveis | Híbrida: filtros SQL tipados + `pg_trgm` (texto) + `vector(1536)` (semântica, no padrão de `fn_buscar_trechos_das_fontes`) | "2 quartos até 400 mil perto do metrô com varanda" mistura filtro duro e intenção |
-| Mapa | MapLibre GL com tiles OpenStreetMap (sem chave) e geocodificação por CEP (ViaCEP/BrasilAPI) + Nominatim, com cache | Self-host sem custo por chamada. Google Maps fica opcional com chave do cliente |
-| Fotos | Bucket novo `property-media`. **Público** para as fotos marcadas como publicáveis (vitrine, portais e SEO precisam de URL estável) e privado para documentos e fotos internas | Portal exige URL pública de foto. Hoje `catalog-photos` assina por 1 hora |
-| Documentos | Bucket privado `documents` + tabela `documents` genérica (gancho de núcleo) | Contrato, RG, renda e matrícula precisam de LGPD e retenção |
-| PDFs | Mesmo motor do PDF de LGPD (`workers/lgpd-export-worker.ts`) | Ficha do imóvel, proposta e extrato do proprietário |
-| Índices econômicos | API SGS do Banco Central (IGP-M série 189, IPCA série 433, INCC série 192), buscada por cron e gravada em tabela | Reajuste de aluguel e correção de parcelas de lançamento |
-| Cobrança | Adaptador de gateway (Asaas primeiro; Inter, Iugu e Efí depois) para boleto e Pix, com webhook de baixa | Locação e sinal de reserva |
-| Assinatura eletrônica | Adaptador (ZapSign, Clicksign, D4Sign) | Contrato de locação, proposta, autorização de venda |
+| Necessidade | Escolha | Licença/custo | Observação |
+|---|---|---|---|
+| **Assinatura eletrônica** | **DocuSeal** self-hosted (container ao lado do app) | AGPL-3.0, gratuito self-hosted | Tem API, templates, campos, webhook de "assinado" e trilha de auditoria. Integrado por adaptador `lib/imobiliario/assinatura/` (trocável). Alguns recursos são da versão Pro; confirmar se a API e o webhook necessários estão no gratuito. **Validade jurídica:** assinatura eletrônica avançada vale para contratos particulares entre as partes que a aceitam (MP 2.200-2/2001, art. 10 §2º; Lei 14.063/2020). Escritura continua no cartório |
+| **Assinatura ICP-Brasil (opcional)** | Assinador PAdES que **já existe** no projeto (`lib/lgpd/pades-signer.ts`) com certificado A1 da imobiliária | gratuito (o certificado é do cliente) | Para documentos emitidos pela imobiliária (ficha, avaliação) com validade qualificada |
+| **Mapa** | **MapLibre GL JS** + tiles do **OpenFreeMap** (sem chave, sem limite declarado) ou **Protomaps/PMTiles** self-hosted | BSD / gratuito | Busca por raio e por área desenhada no mapa |
+| **CEP → endereço** | **BrasilAPI** (CEP v2) e **ViaCEP** como reserva | gratuitos | Com cache em tabela |
+| **Geocodificação** | **Nominatim** (OSM). Em escala SaaS, **self-host** ou **Photon**, porque o servidor público limita a 1 req/s | ODbL / gratuito | O pin no mapa é ajustável à mão |
+| **PDF** (ficha, proposta, avaliação, contrato) | **`@react-pdf/renderer`** (já é dependência) | MIT | Mesmo motor do PDF de LGPD |
+| **Índices e taxas** | **API SGS do Banco Central** (dados abertos) | gratuito | INCC para lançamentos e taxas médias de financiamento imobiliário como referência do simulador. Confirmar a série antes de usar |
+| **Visualizador 360°** | **Pannellum** | MIT | Fotos panorâmicas próprias. Tours de terceiros (Matterport, Kuula) entram como link |
+| **Imagens** (WebP, marca d'água, miniaturas) | **sharp** no servidor + compressão no navegador | Apache-2.0 | — |
+| **OCR de documentos** | IA multimodal que o projeto já usa (`media-derive`) ou **Tesseract** para reduzir custo | Apache-2.0 | Classificar "isto é um RG/comprovante" |
+| **Push no celular** | **Web Push** (`web-push`, já é dependência) + PWA | MIT | Sem Firebase |
+| **E-mail transacional** | SMTP que já existe (`lib/email/roteador.ts`) com **Amazon SES** (baixo custo) ou **Postal** self-hosted | — | Para convite, alerta e proposta |
+| **Busca** | **Postgres** (`pg_trgm` + `pgvector`, já instalados) | — | Sem Elasticsearch |
+| **Armazenamento** | Supabase Storage, depois **MinIO** | AGPL | — |
+| **BI interno** (opcional) | Telas próprias com **Recharts** (já é dependência); **Metabase OSS** para a RE9 | MIT / AGPL | — |
 
 ---
 
 ## 3. Modelo de domínio
 
-Todas as tabelas levam `organization_id uuid not null references organizations(id) on delete
-cascade`, RLS `tenant_isolation_<tabela>_all` (ou policies de visibilidade no molde de
-`crm_leads` quando o corretor só deve ver as suas), dinheiro em `_cents` + `currency`, `type` e
-`status` como `text` + CHECK, e `created_at`/`updated_at`. Todas nascem dentro de
-`fn_imobiliario_provisionar()`.
+Todas as tabelas levam:
+
+- `organization_id uuid not null references organizations(id) on delete cascade`;
+- RLS `tenant_isolation_<tabela>_all`, ou as policies de visibilidade no molde de `crm_leads`
+  quando o corretor só deve ver os seus registros;
+- dinheiro em `_cents` + `currency`;
+- `type`/`status` como `text` + CHECK;
+- `created_at`/`updated_at`;
+- `revoke execute ... from public, anon` em toda função.
+
+Tudo isso entra pela tripla de migration.
 
 ### 3.1 Diagrama
 
 ```
-                         ┌────────────────┐
-                         │  developments  │ (empreendimento / lançamento)
-                         └──────┬─────────┘
-                                │ 1:N
-                      ┌─────────▼────────┐
-                      │ development_     │ (torre / bloco / quadra)
-                      │ blocks           │
-                      └─────────┬────────┘
-                                │ 1:N (unidade = imóvel com development_id)
- contacts ◄──owner──┐  ┌───────▼────────┐  ┌──────────────────┐
- (proprietário)     └──┤   properties   ├──┤ property_media    │ fotos, vídeo, tour, planta
-                       │  (imóvel)      │  └──────────────────┘
- auth.users ◄─captador─┤                ├──┤ property_price_history
-                       └──┬──────┬──────┘  └──────────────────┘
-                          │      │ 1:N
-          ┌───────────────┘      └──────────────┐
-  ┌───────▼─────────┐                  ┌────────▼────────┐
-  │ property_       │ autorização      │ property_keys / │
-  │ mandates        │ exclusividade    │ key_movements   │
-  └─────────────────┘                  └─────────────────┘
+                      ┌────────────────┐   (fase opcional: lançamentos)
+                      │  developments  │──► development_blocks ──► properties (unidades)
+                      └────────────────┘
+ contacts ◄─owner──┐  ┌────────────────┐  ┌──────────────────────┐
+ (proprietário)    └──┤   properties   ├──┤ property_media        │ fotos, vídeo, planta, 360
+ auth.users ◄captador─┤   (imóvel)     ├──┤ property_price_history│
+                      └──┬──────┬──────┘  └──────────────────────┘
+                         │      │
+          property_mandates   property_keys / key_movements
+          (autorização)       (chaves)
 
- crm_leads ──1:1──► lead_search_profiles (perfil de busca)       ──► match (CALCULADO, sem tabela)
- crm_leads ──N:N──► properties via crm_lead_links (target_kind='property', link_kind= interesse|enviado|visitado|descartado)
- calendar_appointments ──► properties (visit_details: imóvel, chave, feedback)
- crm_leads ──1:N──► proposals ──1:N──► proposal_events (contraproposta, aceite, recusa)
- proposals ──► contracts (venda | locação) ──► documents / signatures
- contracts(locação) ──► rental_charges (boleto/pix) ──► owner_payouts (repasse)
- crm_leads(ganho) ──► commission_splits (captador, vendedor, gerente, parceiro, imobiliária)
- compliance_records (COAF/PLD) ──► contacts, contracts
+ crm_leads ─1:1─► lead_search_profiles ─► match (CALCULADO em SQL, sem tabela)
+ crm_leads ─N:N─► properties via crm_lead_links (target_kind='property'; interesse|enviado|visitado|descartado)
+ calendar_appointments ─1:1─► visit_details (imóvel, chave, check-in, ficha pós-visita)
+ crm_leads ─1:N─► proposals ─1:N─► proposal_events
+ proposals ─► contracts ─► contract_parties, documents, signature_requests (DocuSeal)
+ contracts ─► commission_splits
+ contacts/contracts ─► compliance_records (PLD/COAF)
+ portal_integrations ─► portal_listings (Grupo OLX, Imovelweb)
 ```
 
-### 3.2 Tabelas
-
-#### `properties`: o imóvel (e também a unidade de lançamento)
+### 3.2 `properties`: o imóvel
 
 | Grupo | Colunas |
 |---|---|
-| Identidade | `id`, `code text` (referência interna, único por organização, ex.: `AP1234`), `development_id uuid null`, `block_id uuid null`, `unit_label text null` (ex.: "Apto 1203") |
-| Classificação | `purpose text` CHECK (`sale`,`rent`,`sale_rent`,`season`); `kind text` CHECK (`apartamento`,`casa`,`casa_condominio`,`cobertura`,`kitnet_studio`,`flat`,`terreno`,`lote_condominio`,`sala_comercial`,`loja`,`galpao`,`predio`,`chacara_sitio`,`fazenda`,`outro`); `segment text` (`residencial`,`comercial`,`rural`,`misto`); `stage text` (`pronto`,`na_planta`,`em_construcao`,`lancamento`) |
-| Endereço | `cep`, `street`, `number`, `complement`, `neighborhood`, `city`, `state char(2)`, `latitude numeric(9,6)`, `longitude numeric(9,6)`, `address_visibility text` (`exato`,`aproximado`,`so_bairro`), porque o proprietário pode não querer o endereço exato publicado |
-| Medidas | `area_private_m2`, `area_total_m2`, `area_land_m2` (numeric), `bedrooms`, `suites`, `bathrooms`, `parking_spaces`, `floor`, `total_floors`, `year_built` |
-| Valores | `sale_price_cents`, `rent_price_cents`, `condo_fee_cents`, `iptu_cents` + `iptu_period` (`mensal`,`anual`), `currency`, `price_on_request bool` |
-| Condições | `accepts_financing`, `accepts_fgts`, `mcmv_eligible`, `accepts_exchange` (permuta), `rent_guarantees text[]` (`fiador`,`seguro_fianca`,`caucao`,`titulo_capitalizacao`,`sem_garantia`) |
-| Características | `features text[]` com vocabulário controlado no TS (`piscina`,`churrasqueira`,`varanda_gourmet`,`portaria_24h`,`elevador`,`academia`,`pet_friendly`,`mobiliado`,`ar_condicionado`, …), mais índice GIN |
-| Documentação | `registry_number` (matrícula), `registry_office` (cartório), `iptu_registration` (inscrição), `habite_se bool`, `documentation_status text` (`regular`,`pendente`,`irregular`) |
-| Estado | `status text` CHECK (`draft`,`available`,`reserved`,`proposal`,`sold`,`rented`,`suspended`,`archived`), `status_changed_at`, `published bool`, `featured bool` |
-| Pessoas | `owner_contact_id → contacts` (principal; coproprietários em `property_owners`), `captured_by_user_id → auth.users`, `responsible_user_id` |
-| Conteúdo | `title`, `description` (pode ser gerada pela IA), `internal_notes`, `video_url`, `tour_url` (Matterport/360), `embedding vector(1536)` |
-| Rastreio | `source` (`manual`,`importacao`,`portal`,`ia_captacao`), `external_ids jsonb` (código no ERP e em cada portal, com esquema Zod central) |
+| Identidade | `id`, `code text` (referência, única por organização, ex.: `AP1234`), `development_id null`, `block_id null`, `unit_label null` |
+| Classificação | `kind text` CHECK (`apartamento`,`casa`,`casa_condominio`,`cobertura`,`kitnet_studio`,`flat`,`terreno`,`lote_condominio`,`sala_comercial`,`loja`,`galpao`,`predio`,`chacara_sitio`,`fazenda`,`outro`); `segment` (`residencial`,`comercial`,`rural`); `stage` (`pronto`,`na_planta`,`em_construcao`); `condition` (`novo`,`usado`) |
+| Endereço | `cep`, `street`, `number`, `complement`, `neighborhood`, `city`, `state char(2)`, `latitude numeric(9,6)`, `longitude numeric(9,6)`, `address_visibility` (`exato`,`aproximado`,`so_bairro`) |
+| Medidas | `area_private_m2`, `area_total_m2`, `area_land_m2`, `bedrooms`, `suites`, `bathrooms`, `parking_spaces`, `floor`, `total_floors`, `year_built`, `sun_position` |
+| Valores | `sale_price_cents`, `condo_fee_cents`, `iptu_cents` + `iptu_period`, `currency`, `price_on_request`, `min_price_cents` (piso de negociação autorizado pelo proprietário; **nunca exposto** à vitrine nem à IA como número, só como regra) |
+| Condições | `accepts_financing`, `accepts_fgts`, `mcmv_eligible`, `accepts_exchange` (permuta), `exchange_notes` |
+| Características | `features text[]` com vocabulário controlado no TS (piscina, churrasqueira, varanda gourmet, portaria 24h, elevador, academia, pet friendly, mobiliado, ar-condicionado…) + índice GIN |
+| Documentação | `registry_number` (matrícula), `registry_office`, `iptu_registration`, `habite_se`, `documentation_status` (`regular`,`pendente`,`irregular`) |
+| Estado | `status` CHECK (`draft`,`available`,`reserved`,`proposal`,`sold`,`suspended`,`archived`), `status_changed_at`, `published`, `featured` |
+| Pessoas | `owner_contact_id → contacts`, `captured_by_user_id`, `responsible_user_id` |
+| Conteúdo | `title`, `description` (rascunho pela IA, editável), `internal_notes`, `video_url`, `tour_url`, `embedding vector(1536)` |
+| Rastreio | `source` (`manual`,`planilha`,`xml`,`ia_captacao`), `external_ids jsonb` (código em cada portal, com esquema Zod central) |
 
 **Índices:**
 
-- `(organization_id, status, purpose, kind)`
+- `(organization_id, status, kind)`
 - `(organization_id, city, neighborhood)`
-- `(organization_id, sale_price_cents)` e `(organization_id, rent_price_cents)`
+- `(organization_id, sale_price_cents)`
 - GIN em `features`
 - trigram em `title`/`neighborhood`
 - `ivfflat` em `embedding`
 - `(latitude, longitude)`
 
-#### Tabelas satélites
+### 3.3 Tabelas satélites
 
 | Tabela | Para quê | Pontos-chave |
 |---|---|---|
-| `property_owners` | Coproprietários | `property_id`, `contact_id`, `share_percent`, `is_primary`. Reusa `contacts` (DIRC: Referenciar) |
-| `property_media` | Fotos, vídeos, plantas, tour | `kind` (`photo`,`video`,`floorplan`,`tour`,`document_public`), `storage_path`, `position numeric` (fractional indexing, igual ao kanban), `is_cover`, `publishable`, `caption`, `ai_description` (gerada pelo `media-derive`). Sem o limite de 5 fotos: portal pede 20 a 50 |
-| `property_price_history` | Histórico de preço | Alimenta o gatilho "queda de preço" e a análise de tempo de mercado. Append-only |
-| `property_mandates` | Autorização de venda/locação | `kind` (`exclusiva`,`aberta`), `starts_at`, `ends_at`, `commission_percent`, `document_id`, `signed_at`. Alerta de vencimento |
-| `property_keys` / `key_movements` | Controle de chaves | Onde está a chave (imobiliária, portaria, proprietário, corretor), retirada, devolução, quem e quando. Vinculado à visita |
-| `developments` | Empreendimento | Nome, incorporadora (`developer_contact_id`), endereço, `stage`, previsão de entrega, `registro_incorporacao` (RI), memorial, tabela de preços vigente, VGV previsto, links de book/decorado |
-| `development_blocks` | Torre / bloco / quadra | Nome, número de andares, unidades por andar. Alimenta o **espelho de vendas** |
-| `development_price_tables` | Tabela de preços e condições | Versionada por ponteiro, igual a `promise_table_versions`: entrada, mensais, intermediárias, chaves, índice de correção (INCC antes das chaves, IPCA/IGP-M depois) |
-| `unit_reservations` | Reserva de unidade | `lead_id`, `property_id`, `expires_at` (reserva expira sozinha por cron), `broker_user_id`, `partner_org_label`. **Constraint:** uma reserva ativa por unidade |
-| `lead_search_profiles` | Perfil de busca do lead | `lead_id` (1:1), `purpose`, `kinds[]`, `cities[]`, `neighborhoods[]`, `center_lat/lng` + `radius_km`, `price_min/max_cents`, `bedrooms_min`, `suites_min`, `parking_min`, `area_min`, `features_must[]`, `features_nice[]`, `financing` (`a_vista`,`financiamento`,`fgts`,`consorcio`,`permuta`), `income_monthly_cents`, `down_payment_cents`, `move_deadline`, `free_text`, `embedding`. Colunas tipadas, porque o match é SQL |
-| `visit_details` | Complemento da visita | `appointment_id → calendar_appointments` (1:1), `property_id`, `key_movement_id`, `checkin_at`, `checkin_lat/lng`, `feedback_score` 1-5, `feedback_likes`, `feedback_dislikes`, `next_step`. **A agenda existente é reaproveitada inteira** |
-| `proposals` | Proposta | `lead_id`, `property_id`, `buyer_contact_id`, `amount_cents`, `payment_terms jsonb` (esquema Zod: sinal, financiamento, FGTS, permuta, parcelas), `valid_until`, `status` (`rascunho`,`enviada`,`contraproposta`,`aceita`,`recusada`,`expirada`,`cancelada`), `document_id` (PDF) |
-| `proposal_events` | Histórico de negociação | Cada contraproposta é uma linha nova. Nada é sobrescrito |
-| `contracts` | Contrato | `kind` (`compra_venda`,`promessa_compra_venda`,`locacao_residencial`,`locacao_comercial`,`administracao`), partes em `contract_parties` (papel: `vendedor`,`comprador`,`locador`,`locatario`,`fiador`,`conjuge`,`procurador`), datas, valores, `guarantee_kind`, `adjustment_index` (`IGPM`,`IPCA`,`INCC`), `adjustment_month`, `status`, `retention_until` (retenção legal) |
-| `rental_charges` | Cobrança mensal | Competência, aluguel + condomínio + IPTU + encargos, desconto de pontualidade, multa e juros, `gateway_charge_id`, `status` (`aberta`,`paga`,`atrasada`,`cancelada`) |
-| `owner_payouts` | Repasse ao proprietário | Competência, valor bruto, taxa de administração, retenções (IR quando aplicável), líquido, integração com `financial_entries` |
-| `commission_splits` | Rateio de comissão | `lead_id`/`contract_id`, `beneficiary_kind` (`user`,`parceiro`,`imobiliaria`), `beneficiary_user_id`, `role` (`captador`,`vendedor`,`gerente`,`parceiro`,`plantao`), `percent`, `amount_cents`, `status`, `reverses_split_id` (estorno por contra-lançamento, herdando o invariante do financeiro) |
-| `commission_policies` | Regras padrão | Ex.: venda de usado = 6% total, sendo 40% captação e 60% venda; lançamento = 4%. Por organização, versionado |
-| `portal_integrations` | Portal configurado | `portal` (`grupo_olx`,`imovelweb`,`chaves_na_mao`,`casa_mineira`,`wimoveis`,`meta_catalog`,…), `feed_token` (hash), credenciais em `ai_provider_credentials`-like/`private.app_secrets`, `plan_limits` (destaques contratados), `last_feed_at`, `last_error` |
-| `portal_listings` | Publicação por portal | `property_id`, `portal`, `highlight_level` (`simples`,`destaque`,`super_destaque`), `status`, `external_listing_id`, `leads_count`, `views` (quando o portal devolver) |
-| `economic_indices` | Índices | Série, competência, valor. Sem `organization_id` (dado público; RLS só leitura) |
-| `compliance_records` | PLD/COAF | `contact_id`, `contract_id`, `kind` (`cadastro_pld`,`operacao_registrada`,`comunicacao_coaf`,`declaracao_nao_ocorrencia`), `pep bool`, `beneficial_owner`, `amount_cents`, `cash_amount_cents`, `reported_at`, `coaf_protocol`. **Acesso restrito ao papel `compliance`**, porque a lei proíbe dar ciência ao cliente e o gerente comum não deve ver |
+| `property_owners` | Coproprietários | `contact_id`, `share_percent`, `is_primary`. Reusa `contacts`, que já tem CPF criptografado e cascata de LGPD |
+| `property_media` | Mídia | `kind` (`photo`,`video`,`floorplan`,`panorama`), `storage_path`, `position numeric` (fractional indexing), `is_cover`, `publishable`, `caption`, `ai_description`. Até 50 fotos (limite do plano) |
+| `property_price_history` | Histórico de preço | Append-only. Alimenta "queda de preço" e o tempo de mercado |
+| `property_mandates` | Autorização de venda | `kind` (`exclusiva`,`aberta`), vigência, `commission_percent`, `document_id`, `signature_request_id`. Alerta de vencimento |
+| `property_keys` / `key_movements` | Chaves | Onde está (imobiliária, portaria, proprietário, corretor), retirada, devolução, quem e quando |
+| `lead_search_profiles` | Perfil de busca (1:1 com o lead) | `kinds[]`, `cities[]`, `neighborhoods[]`, `center_lat/lng` + `radius_km`, `price_min/max_cents`, `bedrooms_min`, `suites_min`, `parking_min`, `area_min`, `features_must[]`, `features_nice[]`, `payment` (`a_vista`,`financiamento`,`fgts`,`consorcio`,`permuta`), `income_band`, `down_payment_band`, `move_deadline`, `has_property_to_sell`, `free_text`, `embedding` |
+| `visit_details` | Complemento da visita (1:1 com `calendar_appointments`) | `property_id`, `key_movement_id`, `checkin_at`, `checkin_lat/lng`, `feedback_score`, `feedback_likes`, `feedback_dislikes`, `next_step`. **A agenda existente é reaproveitada inteira** |
+| `proposals` | Proposta | `lead_id`, `property_id`, `buyer_contact_id`, `amount_cents`, `payment_terms jsonb` (Zod: sinal, financiamento, FGTS, permuta, parcelas), `valid_until`, `status` (`rascunho`,`enviada`,`contraproposta`,`aceita`,`recusada`,`expirada`,`cancelada`), `document_id` |
+| `proposal_events` | Negociação | Cada contraproposta é uma linha nova. Nada é sobrescrito |
+| `contracts` | Contrato | `kind` (`promessa_compra_venda`,`compra_venda`,`autorizacao_venda`,`recibo_sinal`), `contract_parties` (`vendedor`,`comprador`,`conjuge`,`procurador`,`corretor`), valores, datas (sinal, financiamento, escritura, chaves), `status`, `retention_until` |
+| `signature_requests` | Envio para assinatura (DocuSeal) | `document_id`, `provider`, `external_id`, signatários, `status`, `completed_at`, `audit_trail_path`. Webhook idempotente (`unique (organization_id, external_id)`) |
+| `commission_policies` / `commission_splits` | Comissão | A política define, por exemplo, 6% no total, sendo 40% captação e 60% venda. Os splits têm beneficiário (`user`,`parceiro`,`imobiliaria`), papel (`captador`,`vendedor`,`gerente`,`parceiro`,`plantao`), percentual, valor, status e estorno por contra-lançamento. Integra com `financial_entries` |
+| `portal_integrations` / `portal_listings` | Portais | Por portal (`grupo_olx`,`imovelweb`): `feed_token` (hash), credenciais em segredo, limites de destaque do plano contratado com o portal, último envio, último erro; por imóvel: nível de destaque, status, id externo, leads recebidos |
+| `compliance_records` | PLD/COAF | `kind` (`cadastro_pld`,`operacao_registrada`,`comunicacao_coaf`,`declaracao_nao_ocorrencia`), `pep`, `beneficial_owner`, valores (inclusive em espécie), protocolo. **Visível só ao papel `compliance`** |
+| `saas_plans` / `saas_subscriptions` / `saas_invoices` | Assinatura do ImobCRM | Plano, limites, ciclo, status (`trial`,`active`,`past_due`,`suspended`,`cancelled`), cobranças Pix/boleto. **Sem RLS de tenant para escrita**: só a plataforma escreve, e a organização lê a sua |
 
-**Mudanças no núcleo (ganchos genéricos):**
+**Na fase opcional de lançamentos:** `developments`, `development_blocks`,
+`development_price_tables` (versionada) e `unit_reservations` (uma reserva ativa por unidade, com
+expiração por cron).
 
-- `crm_lead_links.target_kind` passa a aceitar `property`, `proposal` e `contract`. É forward-fix
-  da constraint, num bloco único no apêndice.
-- `teams` + `team_members` + `teams.manager_user_id`, com o escopo `visibility_mode = 'team'`
-  aplicado por RLS a leads e conversas.
-- `user_organizations.creci text` + `creci_uf` (corretor) e `organizations.creci_pj` (imobiliária).
-- `documents` (genérica): `owner_kind`/`owner_id` padronizado (anti-pattern 8), `category`,
-  `sensitivity` (`publico`,`interno`,`pessoal`,`sensivel`), `retention_basis`
-  (`consentimento`,`contrato`,`obrigacao_legal`), `retention_until`, `storage_path`.
-- A cascata de LGPD (`fn_lgpd_cascade_redact_contact`) passa a respeitar `retention_until`: o
-  contato vinculado a contrato vigente ou em prazo legal é **pseudonimizado no que é possível e
-  mantido no que a lei exige**, com registro do motivo. A ADR-0002 D8 cobre o alcance dinâmico
-  das tabelas do módulo.
+**Mudanças no núcleo:**
 
-### 3.3 Match: calculado, nunca sincronizado
+- `crm_lead_links.target_kind` passa a aceitar `property`, `proposal` e `contract`.
+- `teams`/`team_members` e `visibility_mode='team'`.
+- `user_organizations.creci`/`creci_uf` e `organizations.creci_pj`.
+- `documents` genérica com `sensitivity`, `retention_basis` e `retention_until`.
+- A cascata de LGPD respeita a retenção legal.
 
-`fn_imobiliario_match(org, lead_id | property_id, limite)` é SQL puro, sem coluna sincronizada
-(DIRC: Calcular). Ele funciona em três etapas:
+### 3.4 Match: calculado, nunca sincronizado
 
-1. **Filtro duro:** finalidade, tipo, cidade/bairro ou raio, preço com tolerância configurável
-   (±10%), quartos ≥ mínimo, e `status = available`.
+`fn_imob_match(org, lead_id | property_id, limite)` é SQL puro, em três etapas:
+
+1. **Filtro duro:** tipo, cidade/bairro ou raio, preço com tolerância configurável (±10%), quartos
+   ≥ mínimo, e `status = available`.
 2. **Pontuação** de 0 a 100:
-   - preço dentro da faixa: 30
-   - localização (bairro exato 25, bairro vizinho ou raio 15)
+   - preço: 30
+   - localização (bairro 25; vizinho ou raio 15)
    - quartos/suítes/vagas: 15
-   - características obrigatórias: 15
-   - características desejáveis: 5
-   - similaridade semântica do `free_text` com a descrição (embedding): 10
-3. **Explicação:** cada ponto vem com o motivo em texto ("dentro do orçamento", "falta 1 vaga"),
-   para o corretor e para a IA. É o mesmo princípio do `ScoreSlot` do kanban: número com evidência.
+   - obrigatórios: 15
+   - desejáveis: 5
+   - similaridade semântica: 10
+3. **Explicação por item:** "dentro do orçamento", "falta 1 vaga".
 
-Os consumidores são a tela de Match, a ferramenta de IA `crm_match_properties`, o gatilho
-"imóvel compatível" e a campanha segmentada.
+Os consumidores são a tela de Match, a ferramenta `crm_match_properties`, o gatilho
+`imovel.compativel` e a campanha segmentada.
 
 ---
 
 ## 4. O agente de IA imobiliário
 
-### 4.1 Ferramentas novas (catálogo MCP, `modulo: "imobiliario"`)
+### 4.1 Ferramentas novas
 
 | Ferramenta | Pacote | Risco | O que faz |
 |---|---|---|---|
-| `crm_search_properties` | vender | baixo | Busca híbrida com filtros + texto livre. Devolve até 5 imóveis com código, resumo, preço e link. Tem `motivoDoVazio` ("nenhum imóvel até 400 mil na zona sul; o mais próximo custa 430 mil") |
-| `crm_get_property` | vender | baixo | Ficha completa de um imóvel (sem o endereço exato se `address_visibility` proibir) |
-| `crm_match_properties` | vender | baixo | Imóveis compatíveis com o perfil do lead, com a explicação |
-| `crm_save_search_profile` | vender | baixo | Grava ou atualiza o perfil de busca estruturado, com validação Zod |
-| `crm_simulate_financing` | vender | baixo | Cálculo **determinístico** SAC e PRICE: entrada, prazo, taxa de referência, renda mínima (comprometimento ≤ 30%), faixa MCMV. Tabela de taxas e faixas **versionada e editável pela imobiliária**. Sempre devolve o aviso "simulação, sujeita à análise de crédito" |
-| `crm_book_visit` | atender | médio | Encapsula `crm_find_and_book_appointment` com `category='visita'`, o imóvel, o endereço preenchido, o corretor responsável pelo imóvel/região e o registro da chave |
-| `crm_register_visit_feedback` | reter | baixo | Ficha pós-visita coletada na conversa |
-| `crm_create_proposal_draft` | vender | **crítico** | Rascunho de proposta que **sempre** precisa de aprovação humana (padrão de `crm_propose_reactivation`) |
-| `crm_create_property_draft` | atender | médio | Agente de captação: proprietário descreve o imóvel e as fotos chegam pelo WhatsApp. Cria um rascunho (`status='draft'`) para o captador revisar |
-| `crm_list_developments` / `crm_get_unit_availability` | vender | baixo | Lançamentos: tipologias, unidades disponíveis e tabela vigente |
+| `crm_search_properties` | vender | baixo | Busca híbrida (filtros + texto). Até 5 imóveis, com código, resumo, preço e link da vitrine. Tem `motivoDoVazio` ("o mais próximo custa 430 mil") |
+| `crm_get_property` | vender | baixo | Ficha, respeitando `address_visibility` |
+| `crm_match_properties` | vender | baixo | Compatíveis com o perfil, com explicação |
+| `crm_save_search_profile` | vender | baixo | Grava o perfil estruturado (Zod) |
+| `crm_simulate_financing` | vender | baixo | SAC e PRICE **determinísticos**: entrada, prazo, taxa de referência, renda mínima (comprometimento ≤ 30%), enquadramento MCMV. Tabela de taxas e faixas **versionada e editável** por imobiliária. Aviso fixo: "simulação, sujeita à análise de crédito do banco" |
+| `crm_book_visit` | atender | médio | Visita com imóvel, endereço, corretor responsável (imóvel, região ou roleta) e chave |
+| `crm_register_visit_feedback` | reter | baixo | Ficha pós-visita pela conversa |
+| `crm_create_proposal_draft` | vender | **crítico** | Rascunho que **sempre** passa por aprovação humana |
+| `crm_create_property_draft` | atender | médio | Agente de captação: proprietário descreve e manda fotos, e o sistema cria um rascunho para o captador |
 
-**Envio de mídia imobiliária.** Generalizar `send_message.produto_codigo` para
-`send_message.imovel_codigo`. Isso envia foto de capa + 4 fotos, card com resumo, link da vitrine
-e, se houver, vídeo (`sendVideo`), book em PDF (`sendFile`) e pino de localização aproximada.
-**Tudo passa pela cadeia `runBeforeSend`** (pacing, janela, disclosure). Nenhuma rota de envio
-fica fora dos guardrails.
+**Envio de mídia.** Generalizar `send_message.produto_codigo` para `imovel_codigo`: capa + 4 fotos,
+resumo, link da vitrine e, se houver, vídeo (`sendVideo`), ficha em PDF (`sendFile`) e pino de
+localização aproximada. **Tudo passa pelo `runBeforeSend`.**
 
-### 4.2 Qualificação imobiliária
+### 4.2 Qualificação
 
-- Estender o `update_lead_state` para aceitar, além de BANT, um bloco `imobiliario`:
-  - `finalidade`
-  - `forma_pagamento`
-  - `renda_faixa`
-  - `entrada_faixa`
-  - `usa_fgts`
-  - `prazo_mudanca`
-  - `ja_visitou_outros`
-  - `tem_imovel_para_vender` (gatilho de permuta e de captação)
-- Guardar tudo em `lead_search_profiles` com validação estrita.
-- **LGPD.** Renda é pedida em **faixa**, nunca número exato no primeiro contato. Documentos só são
-  pedidos no estágio de proposta, com aviso de finalidade. Isso ajusta a regra de
-  `lib/agent-engine/playbooks/platform.md:29` com uma exceção declarada por base legal
-  (`guardrails/lgpd/legal-basis.ts`).
+O `update_lead_state` ganha, além de BANT, um bloco imobiliário:
+
+- `forma_pagamento`
+- `renda_faixa`
+- `entrada_faixa`
+- `usa_fgts`
+- `prazo_mudanca`
+- `ja_visitou_outros`
+- `tem_imovel_para_vender`
+
+O bloco é gravado em `lead_search_profiles`. Renda é sempre pedida **em faixa**, e documentos só no
+estágio de proposta, com finalidade declarada. A regra de `platform.md:29` ganha uma exceção por
+base legal (`guardrails/lgpd/legal-basis.ts`).
 
 ### 4.3 Guardrails novos
 
 | Gate | Veta |
 |---|---|
-| `financing_promise` | "Seu financiamento está aprovado", "taxa garantida", "com certeza você consegue". Estende `guardrails/promise/engine.ts` |
-| `price_negotiation` | A IA oferecer desconto sobre imóvel de terceiro sem regra da tabela de promessas (piso de negociação por imóvel, definido pelo proprietário e opcional) |
-| `address_privacy` | Enviar endereço exato quando `address_visibility` não permite (segurança do proprietário) |
-| `creci_disclosure` | Primeira mensagem de uma conversa nova e todo material de divulgação levam a identificação e o CRECI da imobiliária (template de disclosure já existente, `disclosure_template_*`) |
-| `availability_truth` | Oferecer imóvel com `status` diferente de `available` (a busca já filtra, e o gate é a segunda linha) |
+| `financing_promise` | "Financiamento aprovado", "taxa garantida". Estende `guardrails/promise/engine.ts` |
+| `price_negotiation` | Desconto fora da regra do proprietário (`min_price_cents`), revelar o piso, negociar sem humano |
+| `address_privacy` | Endereço exato quando a visibilidade não permite |
+| `creci_disclosure` | Primeira mensagem e material de divulgação sem a identificação e o CRECI da imobiliária |
+| `availability_truth` | Oferecer imóvel que não está `available` |
 
-### 4.4 Agentes e roteador prontos (kit do onboarding)
+### 4.4 Agentes, roteador e skills do kit
 
-| Agente | Função | Ferramentas |
-|---|---|---|
-| **Atendimento de Vendas** | Lead de compra: qualifica, busca, envia, agenda visita | search, match, get_property, simulate_financing, book_visit, save_search_profile |
-| **Atendimento de Locação** | Lead de aluguel: garantias, documentos, visita, pré-análise | search, book_visit, save_search_profile + FAQ de garantias |
-| **Captação** | Proprietário que quer anunciar: coleta dados, fotos e agenda avaliação | create_property_draft, book_visit (`vistoria`) |
-| **Lançamentos** | Interessado em empreendimento: tipologias, tabela, decorado | list_developments, unit_availability, book_visit |
-| **Pós-visita / reengajamento** | Ficha pós-visita, reativação por match | register_visit_feedback, match |
+| Agente | Função |
+|---|---|
+| **Atendimento de Vendas** | Qualifica, busca, envia, simula, agenda visita |
+| **Captação** | Proprietário que quer vender: dados, fotos e avaliação agendada |
+| **Pós-visita e reengajamento** | Ficha pós-visita e reativação por match |
 
-O **roteador** (`ai_routers`) tem as intenções:
+**Roteador:** *comprar* · *vender/anunciar meu imóvel* · *já sou cliente/falar com corretor* ·
+*outros*. Pedidos de **aluguel** recebem uma resposta educada de que a imobiliária trabalha só com
+venda, que é configurável.
 
-- *comprar*
-- *alugar*
-- *anunciar/vender meu imóvel*
-- *lançamento/planta*
-- *sou inquilino/proprietário* (humano ou administração)
+**Skills:**
 
-**Skills** (texto de nicho que entra quando o matcher casa):
-
-- `qualificacao-imobiliaria`
+- `qualificacao-compra`
 - `objecao-preco-imovel`
 - `financiamento-e-fgts`
-- `documentos-locacao`
-- `garantias-locaticias`
-- `visita-e-chaves`
-- `permuta`
 - `mcmv`
+- `permuta`
+- `visita-e-chaves`
+- `documentos-da-compra`
+- `custos-da-compra` (ITBI, escritura, registro, avaliação bancária)
 
-**Base de conhecimento semente:** FAQ de taxas (ITBI, escritura, registro, avaliação bancária),
-documentos por tipo de negócio, garantias e bairros atendidos.
-
-### 4.5 Follow-ups imobiliários
+### 4.5 Follow-ups de venda
 
 Criar `lib/followup/modelos/imobiliaria.ts` e incluir o nicho em `NICHOS_DE_MODELO`.
 
 | Cadência | Gatilho | Passos |
 |---|---|---|
-| Lead de portal sem resposta | `lead_created` + `silence` | 5 min (IA), 2 h, 24 h com imóveis similares, 72 h última tentativa |
-| Perfil definido, sem visita | `stage_change` → "Sei o que oferecer" + `silence` 48 h | Nova seleção via match |
-| Pós-visita | `appointment.completed` | 2 h: "o que achou?" (ficha); 48 h: alternativas se não gostou |
-| No-show de visita | `appointment.no_show` | Reagendamento (usa `fn_appointment_recover`) |
-| Proposta parada | `stage_change` → "Proposta" + `silence` 72 h | Corretor recebe tarefa, não a IA |
-| Locação: vencimento de contrato | recorrente, anual −90 d | Renovar ou desocupar |
+| Lead de portal sem resposta | `lead_created` + `silence` | 5 min, 2 h, 24 h (imóveis similares), 72 h |
+| Perfil definido sem visita | etapa "Qualificado" + 48 h | Nova seleção via match |
+| Pós-visita | `appointment.completed` | 2 h: ficha; 48 h: alternativas |
+| Não compareceu | `appointment.no_show` | Reagendar (`fn_appointment_recover`) |
+| Proposta parada | etapa "Proposta" + 72 h | **Tarefa para o corretor**, não a IA |
 | Reengajamento | evento `imovel.compativel` | Proposta de contato com aprovação humana |
+| Pós-venda | contrato assinado + 30/180/365 dias | Indicação, avaliação, aniversário do imóvel |
 
 ---
 
 ## 5. Épicos
 
-Cada épico traz entregas, reaproveitamento, critérios de aceite e o destino (DoD 18).
+### E0 — Fundação do fork e da operação SaaS · *infraestrutura*
 
-### E0 — Fundação do fork · *infraestrutura*
+Ver §2.2 e §2.3.
 
-- **Entregas:** remoto upstream com rotina de merge, faixa de migrations, namespace de imagens,
-  versão própria, CI com os 5 checks, marca própria.
-- **Aceite:** instalação fresca numa VPS com `install.sh` do fork puxando as imagens do fork; um
-  merge de `upstream/main` sem conflito em migration.
+**Aceite:** staging e produção de pé com a marca ImobCRM, deploy pelo CI, backup restaurado com
+sucesso, e um merge de `upstream/main` sem conflito em migration.
 
-### E1 — Kit imobiliário e vocabulário · *núcleo (ganchos) + módulo (conteúdo)* ⚡ entrega rápida
+### E1 — Kit imobiliário e vocabulário · ⚡ primeira entrega
 
-- **Onboarding.** O passo "Seu negócio" ganha a escolha explícita de segmento: *Imobiliária
-  (venda e locação)*, *Corretor autônomo*, *Lançamentos/incorporadora*, *Administradora de
-  locação*. Um kit aplica de uma vez (`app/actions/onboarding/montarQuadro.ts` passa a gravar tudo):
+- **Onboarding.** O ImobCRM só atende imobiliária, então **não há seleção de nicho**. O passo
+  "Seu negócio" pergunta: nome, CRECI-J, cidade(s) e bairros de atuação, número de corretores,
+  portais que usa. O kit aplica de uma vez (`app/actions/onboarding/montarQuadro.ts` passa a gravar
+  tudo):
   - **Funis:**
     - **Venda:** Novo lead → Em atendimento → Qualificado → Visita agendada → Visitou → Proposta → Documentação/Financiamento → Vendido | Perdido
-    - **Locação:** Novo lead → Em atendimento → Visita agendada → Visitou → Análise cadastral → Contrato → Alugado | Perdido
-    - **Captação:** Proprietário novo → Avaliação agendada → Avaliado → Autorização assinada → Fotos/anúncio → Publicado | Não captado
-    - **Lançamento:** Interessado → Atendido → Visitou decorado → Simulação → Reserva → Contrato → Vendido | Perdido
-  - **Vocabulário:** lead = Cliente/Interessado, deal = Negócio, won = Vendido/Alugado/Captado, lost = Perdido.
-  - **Motivos de perda** com categoria: crédito negado, comprou com outro corretor, desistiu da
-    compra, preço acima, localização, imóvel vendido/alugado, sem retorno, cadastro reprovado.
-  - **Motivos de ganho** e **campos obrigatórios por etapa** (ex.: valor e imóvel ao entrar em "Proposta").
-  - **Tipos de agenda:** Visita, Vistoria de entrada/saída, Avaliação, Assinatura, Plantão.
+    - **Captação:** Proprietário novo → Avaliação agendada → Avaliado → Autorização assinada → Fotos e anúncio → Publicado | Não captado
+  - **Vocabulário:** Cliente / Negócio / Vendido / Perdido.
+  - **Motivos de perda:** crédito negado, comprou com outro, desistiu, preço, localização, imóvel
+    vendido, sem retorno.
+  - **Campos obrigatórios por etapa:** imóvel e valor em "Proposta".
+  - **Tipos de agenda:** Visita, Avaliação, Assinatura, Plantão.
   - **Agentes, roteador, skills, follow-ups e FAQ** da §4.
-  - **Preset de menu** (`interface_settings`) que esconde Comandas, Faturamento de comanda,
-    Produtos, Prospecção B2B e Nuvemshop.
-- **Vocabulário aplicado em toda a interface:** hook `useVocabulario(pipelineId)` em
-  `NewLeadDialog`, `pipelines/[id]/_client.tsx`, `CRMSidePanel`, `LeadDossier`, `LoseLeadDialog`.
-  Também troca os textos de outro nicho ("paciente", "combo presente").
-- **Reaproveita:** `lib/onboarding/pacotes-de-funil.ts`, `sugerir-funil.ts`,
-  `lib/navigation/interface.ts`, `lib/agenda/tipos.ts`, `createDefaultAgent.ts`,
-  `.agents/skills/deskcomm-cliente-novo/references/nichos.md`.
-- **Aceite:** um leigo instala, escolhe "Imobiliária" e, sem configurar nada, tem os 3 funis, o
-  agente respondendo "procuro 2 quartos até 400 mil" e a agenda com "Visita". Provado por
-  Playwright em ambiente fresco (P0 da doutrina de QA).
+  - **Menu imobiliário:** saem Comandas, Faturamento de comanda, Produtos, Prospecção B2B e
+    Nuvemshop, pelo `interface_settings` ou por um módulo desligado na instância.
+- **Vocabulário em toda a interface:** `useVocabulario(pipelineId)` em `NewLeadDialog`,
+  `pipelines/[id]/_client.tsx`, `CRMSidePanel`, `LeadDossier` e `LoseLeadDialog`. Troca também os
+  textos de outros nichos ("paciente", "combo presente").
+- **Aceite:** um leigo cria conta, faz o onboarding e, sem configurar nada, tem os 2 funis, a
+  agenda com "Visita" e o agente respondendo "procuro 2 quartos até 400 mil". Provado por
+  Playwright em ambiente fresco.
 
-### E2 — Cadastro de imóveis · *módulo*
+### E2 — Cadastro de imóveis · *fase 1*
 
-- **Telas:**
-  - `/app/imoveis` em lista, grade (card com foto, preço e bairro) e **mapa**, com filtros laterais.
-  - Ficha do imóvel com abas: Dados, Fotos e mídia, Proprietários, Interessados (via
-    `crm_lead_links`), Visitas, Propostas, Documentos, Histórico.
-  - Formulário por etapas com **CEP → endereço automático** e pin no mapa ajustável.
-- **Fotos:**
-  - Upload em lote com arrastar e reordenar.
-  - Compressão no cliente e marca d'água opcional com o logo.
-  - **Descrição automática da foto pela IA** (`media-derive`).
-  - **Texto do anúncio gerado pela IA** a partir dos dados, em tom configurável, sempre como
-    rascunho editável.
-- **Importação:**
-  - CSV/planilha (reusa `lib/catalogo/planilha.ts`).
-  - **XML VRSync** (o mesmo formato que o ERP atual já exporta para os portais). É o caminho de
-    migração de quem usa Vista, Jetimob ou Kenlo.
-  - A importação é idempotente por `external_ids`.
-- **Ponte provisória:** para quem não quer migrar, a IA consulta o ERP pelo módulo `banco_externo`.
-- **Aceite:** cadastrar um imóvel com 20 fotos pelo celular em menos de 5 minutos; importar um XML
-  de 500 imóveis sem duplicar ao reimportar; RLS com 2 organizações.
-
-### E3 — Captação e proprietários · *módulo*
-
-- Funil de captação no kanban, com o proprietário como contato e o imóvel como rascunho.
-- **Avaliação (ACM, análise comparativa de mercado):** comparáveis do próprio estoque e das vendas
-  registradas (mesmo bairro, tipo e faixa de área), com preço/m² médio, mediana e sugestão de
-  faixa. Gera um PDF de avaliação com a marca da imobiliária.
-- **Autorização de venda/locação** (`property_mandates`): modelo de documento, assinatura
-  eletrônica, alerta de vencimento em 30/15/5 dias, renovação.
-- **Agente de captação** (§4.4) e captação pela IA com fotos recebidas no WhatsApp.
-- **Aceite:** um proprietário manda "quero anunciar meu apartamento" e, ao fim, existe um imóvel em
-  rascunho com as fotos da conversa e uma avaliação agendada para o captador da região.
-
-### E4 — Perfil de busca e match · *módulo*
-
-- Aba **Perfil de busca** no dossiê do lead e no painel lateral do inbox (`CRMSidePanel`).
-- Tela **Match**, com duas visões: imóvel → leads compatíveis ("quem avisar") e lead → imóveis.
-  Mostra a pontuação com os motivos.
-- **Gatilho `imovel.compativel`:** um trigger em `properties` (novo imóvel, redução de preço,
-  retorno para `available`) grava no `event_log`, porque trigger nunca faz HTTP. Um worker roda o
-  match e gera uma **proposta de reengajamento** na Central (aprovação humana, com pacing) ou uma
-  audiência de campanha.
-- **Aceite:** cadastrar um imóvel compatível com 3 perfis gera 3 propostas de contato em menos de
-  1 minuto, cada uma com a explicação.
-
-### E5 — Agente de IA imobiliário · *módulo + núcleo (envio de mídia)*
-
-- Ferramentas, qualificação, guardrails, agentes, skills e follow-ups da §4.
-- **Prova em par** (`docs/doctrine/prova-em-par.md`): cada caso de aceite mede a tela pelo agente
-  **e** a ferramenta chamada direto com o mesmo texto.
-- **Corpus de avaliação** com 50 conversas reais anonimizadas: "procuro 2 quartos até 400 mil na
-  zona sul", "quero alugar com pet", "aceita FGTS?", "tem como baixar o preço?", "posso visitar
-  sábado?", "tenho um terreno para vender"…
+- `/app/imoveis` em lista, grade e **mapa**, com filtros laterais.
+- **Ficha do imóvel**, com as abas Dados, Mídia, Proprietários, Interessados, Visitas, Propostas,
+  Documentos e Histórico.
+- **Formulário por etapas:**
+  - CEP → endereço (BrasilAPI) → pin ajustável (Nominatim);
+  - campos condicionais por tipo, porque terreno não tem quartos.
+- **Mídia:**
+  - upload em lote pelo celular, com arrastar e reordenar;
+  - WebP e marca d'água opcional;
+  - descrição de cada foto pela IA;
+  - **texto do anúncio gerado pela IA** como rascunho editável.
+- **Código de referência automático** (prefixo por tipo, configurável).
+- **Importação por planilha e XML**, para quem migra de outro sistema. É idempotente por
+  `external_ids`.
+- **Reaproveita** o padrão de `app/app/products/_client.tsx`, `lib/catalogo/planilha.ts`,
+  `lib/catalogo/busca.ts` e `fotos-do-produto.ts`.
 - **Aceite:**
-  - Tempo da primeira resposta menor que 60 s.
-  - 100% das respostas com imóvel real do estoque (zero alucinação de imóvel).
-  - Zero promessa de financiamento aprovado.
-  - Visita agendada na agenda do corretor certo com o endereço do imóvel.
+  - um imóvel com 20 fotos é cadastrado pelo celular em menos de 5 minutos;
+  - reimportar a mesma planilha não duplica;
+  - o teste de isolamento entre 2 organizações passa.
 
-### E6 — Visitas · *módulo sobre a agenda do núcleo*
+### E3 — Captação e avaliação · *fase 3*
 
-- **Agendar a partir do imóvel ou do lead:** endereço preenchido, corretor sugerido (responsável
-  pelo imóvel, pela região ou pela roleta) e verificação de conflito.
-- **Roteiro do dia:** várias visitas em sequência com link de rota (Google Maps/Waze).
-- **Chaves:** retirar, devolver, "chave com o porteiro", alerta de chave não devolvida em 24 h.
-- **Confirmação D-1 e 2 h antes** (lembretes da agenda) com os botões "confirmo" / "remarcar".
-- **Check-in pelo celular** com geolocalização e **ficha pós-visita** (nota, gostou, não gostou,
-  próximo passo), que alimenta o perfil de busca.
-- **Página pública de agendamento de visita** por imóvel (gancho de núcleo `public_page`).
-- **Aceite:** visita marcada pela IA aparece na agenda do corretor e no Google Calendar dele,
-  confirmação chega em D-1, e o check-in e a ficha pós-visita atualizam o funil para "Visitou".
+- Funil de captação, com o proprietário como contato e o imóvel como rascunho.
+- **ACM** (análise comparativa de mercado): comparáveis do estoque e das vendas registradas, preço
+  por m² (média e mediana), faixa sugerida e **PDF de avaliação** com a marca.
+- **Autorização de venda** em modelo com variáveis, assinada no DocuSeal, com alerta de vencimento
+  em 30/15/5 dias.
+- **Agente de captação.**
+- **Aceite:** "quero vender meu apartamento" termina com o imóvel em rascunho, as fotos da conversa
+  e uma avaliação agendada para o captador da região.
 
-### E7 — Portais e captação de leads · *módulo + núcleo (Meta/Google)*
+### E4 — Perfil de busca e match · *fase 2*
 
-- **Entrada de leads:**
-  - Normalizadores no webhook de entrada (`app/api/v1/webhooks/in/[token]`, padrão
-    `lib/webhooks/respondi.ts`): **Grupo OLX (ZAP, VivaReal, OLX)**, Imovelweb, Chaves na Mão,
-    Casa Mineira e 123i.
-  - O código do anúncio vira vínculo lead↔imóvel automático.
-  - Portais que só mandam e-mail: caixa de entrada de e-mail com parser por portal (fase 2).
-- **Meta Lead Ads e Google Lead Forms nativos** (gancho de núcleo): assinatura `leadgen` e busca
-  do lead pela Graph API, reusando `lib/plataformas-de-anuncio/credenciais.ts`.
+- Aba "Perfil de busca" no dossiê e no painel lateral do inbox.
+- Tela Match com as duas direções: imóvel → quem avisar, e lead → imóveis.
+- Gatilho `imovel.compativel`: um trigger grava no `event_log` e um worker gera as propostas de
+  contato na Central, com aprovação humana e pacing.
+- **Aceite:** um imóvel compatível com 3 perfis gera 3 propostas explicadas em menos de 1 minuto.
+
+### E5 — Agente de IA imobiliário · *fases 1 e 2*
+
+- Tudo o que está na §4.
+- **Prova em par:** tela e ferramenta com o mesmo texto.
+- **Corpus de avaliação:** 50 conversas reais da **RE9 Imob**, anonimizadas.
+- **Aceite:**
+  - 1ª resposta em menos de 60 s;
+  - 100% dos imóveis citados existem no estoque;
+  - zero promessa de financiamento;
+  - visita na agenda do corretor certo com o endereço.
+
+### E6 — Visitas · *fase 2*
+
+- Agendar a partir do imóvel ou do lead, com endereço preenchido, corretor sugerido e conflito
+  verificado.
+- **Roteiro do dia** com link para Google Maps e Waze.
+- **Chaves:** controle de retirada e devolução, e alerta de chave não devolvida.
+- **Confirmação** em D-1 e 2 h antes, com botões.
+- **Check-in** com GPS e **ficha pós-visita**, que atualiza o perfil de busca e move o funil.
+- **Página pública** de agendamento por imóvel.
+- **Aceite:** a visita marcada pela IA aparece na agenda do corretor e no Google Calendar, a
+  confirmação chega, e o check-in e a ficha movem o lead para "Visitou".
+
+### E7 — Portais Grupo OLX e Imovelweb · *fase 2*
+
 - **Saída (feed XML):**
-  - `GET /api/v1/feeds/[token]/{vrsync,imovelweb,chavesnamao}.xml`, com token no caminho, cache e
-    rate limit.
-  - Seleção de quais imóveis vão para cada portal e com que nível de destaque, respeitando o
-    limite do plano contratado.
-  - Validador do feed na tela, com erros por imóvel (foto faltando, CEP inválido).
-- **Atribuição:** custo por portal (manual, mensal) → CPL, taxa de visita e venda por portal.
-- **Aceite:** um lead de teste do Grupo OLX cria o lead já vinculado ao imóvel, com responsável
-  pela roleta, e a IA responde em menos de 60 s. O feed passa no validador do portal.
+  - `GET /api/v1/feeds/[token]/grupo-olx.xml` (formato **VRSync**) e `.../imovelweb.xml` (formato
+    do Imovelweb), com token no caminho, cache e rate limit;
+  - escolha por imóvel: publicar ou não, e com que nível de destaque, dentro do limite contratado
+    com o portal;
+  - **validador na tela** com o erro de cada imóvel (foto faltando, CEP, CRECI ausente).
+- **Entrada de leads:**
+  - normalizadores no webhook de entrada (`app/api/v1/webhooks/in/[token]`, no padrão de
+    `lib/webhooks/respondi.ts`) para a integração de leads do **Grupo OLX** e do **Imovelweb**;
+  - o código do anúncio vira automaticamente o vínculo lead↔imóvel, depois vêm a roleta e a IA;
+  - onde o portal só entregar por e-mail, uma caixa de entrada com parser (fase 3).
+- **Custo por portal** (informado por mês), para calcular CPL e custo por venda.
+- **Aceite:**
+  - um lead de teste de cada portal cria o lead já vinculado ao imóvel, com responsável, e a IA
+    responde em menos de 60 s;
+  - os feeds passam no validador de cada portal.
 
-> Os formatos e os endpoints de cada portal mudam. Antes de implementar, **validar a
-> documentação atual** de cada um (ex.: VRSync e integração de leads do Grupo OLX) e registrar a
-> versão usada.
+> Os formatos, os endpoints e as regras de cada portal mudam. **Antes de implementar,** baixar a
+> documentação vigente do Grupo OLX (VRSync e integração de leads) e do Imovelweb, pela conta de
+> anunciante da RE9 Imob, e registrar a versão usada em `docs/imobiliario/`.
 
-### E8 — Distribuição de leads e equipes · *núcleo (genérico)*
+### E8 — Distribuição de leads e equipes · *fase 3 (núcleo)*
 
-- **Equipes e filiais** (`teams`): o gerente vê só a sua equipe (`visibility_mode='team'` por RLS).
-- **Roleta de lead** (não só de conversa), com critérios de elegibilidade:
-  - finalidade (venda/locação)
-  - região/bairro
-  - faixa de preço
-  - empreendimento
-  - portal de origem
-  - idioma
-- **Pesos** (corretor sênior recebe mais leads) e **escala de plantão** por data e local (estande,
-  loja, sábado).
-- **SLA com repasse:** o corretor não respondeu em N minutos, o lead passa ao próximo. O evento é
-  auditado e aparece na Central.
-- **Captador × vendedor:** um papel secundário no lead (`crm_lead_roles`), usado na comissão.
-- **Reaproveita:** `lib/routing/decide.ts`, `eligibles.ts`, `eligibility.ts`,
-  `attendant_availability`.
-- **Aceite:** 20 leads de portal distribuídos entre 4 corretores segundo as regras, sem duplicar
-  (idempotência). Um corretor ausente não recebe, e o SLA estourado repassa e registra.
+- Equipes, com o gerente vendo só a sua (RLS).
+- **Roleta de lead** por região, faixa de preço, portal e tipo, com pesos e escala de plantão.
+- **Prazo de resposta com repasse**, auditado e visível na Central.
+- **Captador × vendedor:** papel secundário no lead, usado na comissão.
+- **Reaproveita** `lib/routing/decide.ts`, `eligibles.ts` e `eligibility.ts`.
+- **Aceite:** 20 leads distribuídos entre 4 corretores sem duplicar, o ausente não recebe, e o
+  prazo estourado repassa e registra.
 
-### E9 — Propostas e negociação · *módulo*
+### E9 — Propostas · *fase 3*
 
-- Criar a proposta no dossiê com formas de pagamento estruturadas: sinal, financiamento, FGTS,
-  permuta, parcelas.
-- PDF com a marca e envio pelo WhatsApp.
-- Contraproposta encadeada (`proposal_events`), validade com expiração automática.
-- **Aprovação do proprietário** por link (fase 2) ou registro do corretor.
-- Ao aceitar: o imóvel vai para `proposal`/`reserved`, os outros interessados são avisados
-  (opcional) e é aberta uma tarefa de documentação.
-- **Aceite:** o histórico completo de uma negociação com 3 contrapropostas fica visível na
-  timeline, e o status do imóvel muda sozinho.
+- Formas de pagamento estruturadas, PDF com a marca e envio pelo WhatsApp.
+- Contraproposta encadeada e expiração automática.
+- Registro do aceite do proprietário.
+- Ao aceitar: o imóvel vai para `proposal`/`reserved`, é aberta a tarefa de documentação e, se a
+  organização quiser, os outros interessados são avisados.
+- **Aceite:** 3 contrapropostas visíveis na timeline, e o status do imóvel muda sozinho.
 
-### E10 — Contratos e documentação · *núcleo (documentos) + módulo (contratos)*
+### E10 — Documentos e contratos com DocuSeal · *fase 3*
 
-- **Checklist de documentos** por tipo de negócio e papel (comprador PF/PJ, vendedor, locatário,
-  fiador). Cada item tem status: pendente, recebido, aprovado, recusado. Documentos que chegam pelo
-  WhatsApp são classificados pela IA (**"isto parece um RG"**) e anexados com um clique.
-- **Certidões do vendedor/imóvel** (due diligence) como itens de checklist com validade.
-- **Modelos de contrato** com variáveis (partes, imóvel, valores, garantias), gerando PDF.
-- **Assinatura eletrônica** por adaptador (ZapSign, Clicksign, D4Sign), com webhook de assinado.
-- **Retenção legal:** documentos de contrato recebem `retention_until` e não são apagados por
-  redact antes do prazo. O titular recebe essa explicação no atendimento LGPD.
-- **Aceite:** um contrato de locação gerado, assinado pelas 3 partes e arquivado, com os documentos
-  protegidos (bucket privado, URL assinada, auditoria de cada download).
+- **Checklist por papel:** comprador PF/PJ, vendedor, cônjuge, imóvel (matrícula, certidões,
+  IPTU, condomínio).
+- Documento recebido pelo WhatsApp é **classificado pela IA** e anexado com um clique.
+- **Modelos:** autorização de venda, recibo de sinal, proposta e promessa de compra e venda, com
+  variáveis, em PDF.
+- **Assinatura:** o sistema envia ao DocuSeal, recebe o webhook "assinado" e arquiva o PDF com a
+  trilha de auditoria.
+- **Retenção legal:** contratos e documentos não são apagados antes do prazo, e o titular recebe a
+  explicação.
+- **Aceite:** uma promessa de compra e venda gerada, assinada por comprador, vendedor e cônjuges,
+  arquivada e protegida (bucket privado, URL curta, auditoria de download).
 
-### E11 — Comissões · *módulo, com livro-caixa do núcleo*
+### E11 — Comissões · *fase 3*
 
-- Políticas de comissão por organização (venda, locação, lançamento, parceria).
-- **Rateio automático** ao ganhar um negócio: imobiliária, captador, vendedor, gerente, parceiro,
-  plantão.
-- Ajuste manual auditado. Estorno por contra-lançamento. Integração com `financial_entries`
-  (a pagar/a receber).
-- **Extrato do corretor** (o que tem a receber, recebido e previsto) e relatório para nota fiscal
-  ou RPA.
-- **Aceite:** uma venda de R$ 500 mil a 6% gera os splits corretos segundo a política, e um
-  distrato estorna todos.
+- Políticas por organização, com rateio automático ao ganhar o negócio e ajuste auditado.
+- Estorno por contra-lançamento em caso de distrato.
+- Extrato do corretor e relatório para NF/RPA.
+- **Aceite:** uma venda de R$ 500 mil a 6% gera os splits certos, e o distrato estorna tudo.
 
-### E12 — Lançamentos e incorporação · *módulo*
+### E12 — Lançamentos · *opcional, fase 4*
 
-- Cadastro de empreendimento, torres e unidades, com geração em lote ("torre A, 20 andares, 4 por
-  andar, finais 1 a 4 com tipologias X e Y").
-- **Espelho de vendas** interativo (grade torre × andar × unidade, cor por status). Atualiza em
-  tempo real via Supabase Realtime quando alguém reserva.
-- **Tabela de preços versionada** e fluxo de pagamento (entrada, mensais, intermediárias,
-  chaves), com correção INCC → IPCA.
-- **Reserva com expiração** e fila de espera por unidade.
-- **Imobiliárias parceiras e corretores externos** (fase 5: papel externo com escopo).
-- **Aceite:** duas pessoas tentando reservar a mesma unidade ao mesmo tempo: só uma consegue
-  (constraint + lock). A reserva vencida volta a "disponível" sozinha e avisa o corretor.
+- Empreendimento, torres e unidades geradas em lote.
+- **Espelho de vendas** em tempo real, tabela de preços versionada e fluxo de pagamento com INCC.
+- Reserva com expiração, fila por unidade e imobiliárias parceiras.
+- **Aceite:** reservas simultâneas da mesma unidade resultam em uma só, e a reserva vencida se
+  libera sozinha.
 
-### E13 — Locação e administração · *módulo*
+### E14 — Vitrine pública · *fase 2 (básica) e fase 4 (completa)*
 
-- Contrato de locação com garantias (fiador, seguro-fiança, caução, título), índice e mês de
-  reajuste.
-- **Cobrança mensal** (boleto/Pix via gateway), régua de cobrança pelo WhatsApp (D−3, D0, D+1,
-  D+5, D+15) e baixa automática por webhook.
-- **Reajuste anual** automático pelo índice do Banco Central, com carta de reajuste enviada ao
-  inquilino.
-- **Repasse ao proprietário** com taxa de administração e extrato mensal em PDF.
-- **Vistorias** de entrada e saída: checklist por cômodo com fotos pelo celular e laudo em PDF.
-- **Renovação e desocupação.** **Informe de rendimentos** para o proprietário e dados para a
-  **DIMOB**.
-- **Chamados de manutenção** do inquilino pelo WhatsApp → caso humano (reusa `agent_cases`).
-- **Aceite:** o ciclo de 3 meses simulado (cobrança, pagamento, atraso com multa, repasse,
-  reajuste no 12º mês) bate centavo a centavo com uma planilha de referência.
+- Site da imobiliária no subdomínio ou no domínio próprio (TLS on-demand do Caddy):
+  - busca com mapa;
+  - página do imóvel com galeria, mapa aproximado, simulador e visita;
+  - botão de WhatsApp com **link rastreável** (origem "site" no lead).
+- **SEO:** renderização no servidor, `schema.org/RealEstateListing`, sitemap e **Open Graph** (o
+  link fica bonito no WhatsApp).
+- **Landing page por imóvel ou campanha**, para os anúncios Meta/Google.
+- **Aceite:** LCP menor que 2,5 s no 4G, Lighthouse ≥ 90, e o lead do formulário cai no funil com
+  origem.
 
-### E14 — Vitrine pública e landing pages · *módulo*
-
-- Site da imobiliária em `/<slug>` (ou domínio próprio resolvido pelo banco):
-  - busca com filtros e mapa;
-  - página do imóvel com galeria, características, mapa aproximado, simulador de financiamento e
-    botão de WhatsApp com **link rastreável** (atribui a origem ao lead,
-    `lib/leads/origem-do-site.ts`);
-  - formulário de interesse e agendamento de visita.
-- **Landing de lançamento** com tipologias, espelho resumido e formulário.
-- **SEO:** HTML renderizado no servidor, `schema.org/RealEstateListing`, sitemap, Open Graph por
-  imóvel (compartilhamento bonito no WhatsApp), URL amigável.
-- **Rate limit** e cliente de serviço filtrando `organization_id` resolvido pelo slug (anti-pattern
-  10). A marca vem do banco, e o resolvedor nunca lança erro.
-- **Aceite:** a página de imóvel carrega com LCP menor que 2,5 s no 4G, com nota Lighthouse ≥ 90,
-  e o lead do formulário cai no funil com origem "site".
-
-### E15 — Compliance · *núcleo (documentos, retenção) + módulo (CRECI, PLD)*
+### E15 — Compliance · *fases 2 e 3*
 
 Ver §6.
 
-### E16 — Métricas e BI imobiliário · *módulo*
+### E16 — Métricas · *fase 3*
 
-Ver §7. A tela `/app/metrics` ganha as abas Vendas, Locação, Captação, Portais e Corretores.
+Ver §7. O `/app/metrics` ganha as abas Vendas, Captação, Portais e Corretores.
 
-### E17 — App do corretor (PWA) · *núcleo (shell móvel) + módulo (conteúdo)*
+### E17 — App do corretor (PWA) · *fase 3*
 
-- Shell móvel com quatro abas:
-  - **Hoje:** visitas, tarefas e leads novos.
-  - **Leads.**
-  - **Imóveis:** busca e envio rápido para o cliente.
-  - **Agenda.**
-- **Câmera** para as fotos da captação e da vistoria. Check-in com GPS. Notificação push de lead
-  novo (reusa `public/notify-sw.js`).
-- Instalável: `manifest.ts` com ícones de 192 e 512 px, e modo offline para ficha de imóvel e
-  roteiro do dia.
-- **Aceite:** um corretor recebe o push, abre o lead, envia 3 imóveis e marca a visita em menos de
-  2 minutos, só pelo celular.
+- **Abas:** Hoje, Leads, Imóveis e Agenda.
+- **Recursos:** câmera para captação, check-in com GPS, push de lead novo (Web Push) e modo offline
+  da ficha e do roteiro.
+- **Instalação:** ícones de 192 e 512 px no `manifest.ts`.
+- **Aceite:** do push à visita marcada em menos de 2 minutos, só pelo celular.
 
-### E18 — Portais externos · *fase 5*
+### E19 — Camada comercial SaaS · *fase 3, antes do 2º cliente pagante*
 
-- Portal do proprietário (status do imóvel, visitas, propostas, extrato de repasse) e do inquilino
-  (boletos, chamados, contrato).
-- Exige uma identidade externa fora de `user_organizations`, que é o maior salto de arquitetura:
-  magic link por e-mail/WhatsApp e escopo por contrato. Vai para uma ADR própria antes de
-  implementar.
+- **Cadastro público:** site de vendas → cadastro → teste grátis de 14 dias → onboarding do kit.
+- **Planos e limites** aplicados no servidor, com aviso ao se aproximar do limite.
+- **Cobrança** Pix/boleto pela API bancária, com régua de cobrança, bloqueio suave (somente
+  leitura) e depois suspensão.
+- **Console da RE9** (estende `/admin/tenants`, que já existe): receita, clientes, uso, saúde,
+  inadimplência e sessão de suporte auditada.
+- **Termos:** termos de uso, DPA e política de privacidade versionados, com aceite registrado.
+- **Aceite:** um cliente novo assina sozinho, paga por Pix, tem o plano ativado automaticamente e é
+  suspenso e reativado conforme o pagamento.
+
+> **Fora do escopo** (decisão 1): E13 Locação e administração, e E18 Portais de
+> proprietário/inquilino. Se a decisão mudar, os dois estão descritos na versão anterior deste
+> plano (histórico do git).
 
 ---
 
 ## 6. Compliance e regulação
 
-> ⚠️ **Validar com assessoria jurídica e contábil** antes de lançar. Normas do COFECI, regras do
-> MCMV e layouts de declarações mudam. O sistema deve tratar tudo isso como **configuração
-> versionada**, nunca como texto fixo no código.
+> ⚠️ **Validar com assessoria jurídica e contábil** antes do lançamento comercial. Tudo que é
+> regra (limiares, textos obrigatórios, faixas do MCMV) é **configuração versionada**, nunca texto
+> fixo no código.
 
-| Tema | Base | O que o sistema faz |
+| Tema | Base | O que o ImobCRM faz |
 |---|---|---|
-| **CRECI** | Lei 6.530/78 e resoluções do COFECI sobre publicidade | CRECI da imobiliária (PJ) e de cada corretor (PF) no cadastro. Inserido automaticamente no rodapé da vitrine, no feed, no PDF, nas campanhas e no disclosure do agente. Bloqueio de publicação sem CRECI configurado |
-| **PLD/COAF** | Lei 9.613/98 e regulamentação do COFECI para o setor | Cadastro do cliente com PEP e beneficiário final. Registro das operações acima do limiar ou com pagamento em espécie. Fila de "operação atípica" para análise. Registro da comunicação ao COAF (Siscoaf) com protocolo. **Declaração anual de não ocorrência.** Guarda por 5 anos. **Papel `compliance`** separado: o registro não aparece para o corretor nem para o cliente |
-| **LGPD** | Lei 13.709/18 | Documentos com sensibilidade e base legal. **Retenção legal prevalece sobre eliminação**, com explicação ao titular. Múltiplos titulares por negócio (redact de um fiador não destrói o contrato). Renda em faixa. Consentimento de marketing para reengajamento por match. Relatório de dados por titular (reusa `lgpd_requests` e o export em PDF) |
-| **Lei do Inquilinato** | Lei 8.245/91 | Garantias (uma por contrato, como a lei exige), reajuste anual, prazos de notificação, multa proporcional na rescisão (calculadora), vistoria |
-| **CDC** | Lei 8.078/90 | Publicidade fiel: o preço do anúncio é igual ao do estoque (feed sempre gerado do cadastro). Proposta com validade clara |
-| **DIMOB** | Instrução normativa da Receita Federal | Exportação anual das operações de intermediação e administração |
-| **Anti-spam WhatsApp** | Política do WhatsApp + opt-out já existente | Reengajamento por match só com consentimento ou legítimo interesse documentado, respeitando pacing, janela 7h–22h e STOP (já existentes) |
+| **CRECI** | Lei 6.530/78 e resoluções do COFECI sobre publicidade | CRECI-J da imobiliária e CRECI de cada corretor. Inserção automática em vitrine, feeds, PDFs, campanhas e disclosure do agente. **Publicação bloqueada sem CRECI** |
+| **PLD/COAF** | Lei 9.613/98 e regulamentação do COFECI | Cadastro com PEP e beneficiário final, registro de operações acima do limiar ou em espécie, fila de operação atípica, registro da comunicação ao COAF (Siscoaf), **declaração anual de não ocorrência**, guarda por 5 anos, **papel `compliance`** isolado (sigilo) |
+| **LGPD** | Lei 13.709/18 | A RE9 é operadora e a imobiliária é controladora (DPA). Documentos com sensibilidade e base legal. Retenção legal acima da eliminação, com explicação. Vários titulares por negócio. Renda em faixa. Consentimento para reengajamento. Relatório por titular (reusa `lgpd_requests`) |
+| **CDC** | Lei 8.078/90 | Preço do anúncio = preço do cadastro (feed gerado do cadastro). Proposta com validade clara. Oferta vincula, por isso o gate `availability_truth` |
+| **DIMOB** | Instrução normativa da Receita Federal | Exportação anual das intermediações de compra e venda |
+| **WhatsApp** | Política da Meta + opt-out existente | Reengajamento só com consentimento ou legítimo interesse documentado. Pacing, janela e STOP já existem |
 
 ---
 
-## 7. Métricas do negócio imobiliário
+## 7. Métricas do negócio
 
-| KPI | Definição | Fonte |
-|---|---|---|
-| **Tempo da 1ª resposta** por origem | Minutos entre a chegada do lead e a 1ª mensagem (IA ou humano) | já existe; segmentar por portal |
-| **Taxa lead → visita → proposta → venda** | Funil com semântica fixa (etapas mapeadas por `stage_hint` imobiliário, não pelo nome) | `crm_leads` + `visit_details` + `proposals` |
-| **VGV** | Soma do valor de venda: lançado, vendido, em estoque | `properties` + `contracts` |
-| **VSO** (vendas sobre oferta) | Unidades vendidas no período ÷ (estoque inicial + lançadas) | lançamentos |
-| **Tempo médio de venda/locação** | Do `available` até o `sold`/`rented`, por tipo e bairro | `property_price_history` + status |
-| **Captações por captador** e **% exclusivas** | — | `property_mandates` |
-| **Preço/m²** anunciado × fechado, por bairro | Insumo do ACM | `properties` + `contracts` |
-| **CPL e custo por venda por portal** | Custo do plano ÷ leads e ÷ vendas | `portal_integrations` + origem |
-| **Comissão** gerada, a pagar, paga | — | `commission_splits` |
-| **Vacância** e **inadimplência** | Imóveis administrados vagos; cobranças em atraso ÷ emitidas | locação |
-| **Produtividade do corretor** | Leads, visitas, propostas, vendas, SLA cumprido, nota média das fichas pós-visita | todas |
-| **Performance da IA** | % de leads qualificados pela IA, visitas agendadas pela IA, handoffs e motivos | `ai_agent_runs` + casos |
+| KPI | Definição |
+|---|---|
+| **Tempo da 1ª resposta** por portal | Minutos até a 1ª mensagem (IA ou humano) |
+| **Lead → visita → proposta → venda** | Funil com semântica fixa (etapas mapeadas, não pelo nome) |
+| **VGV** | Vendido no período, em negociação, em estoque |
+| **Tempo médio de venda** | De `available` a `sold`, por tipo e bairro |
+| **Captações por captador** e **% exclusivas** | — |
+| **Preço/m²** anunciado × vendido, por bairro | Insumo do ACM |
+| **CPL e custo por venda** por portal (Grupo OLX, Imovelweb, site, Meta) | — |
+| **Comissão** gerada, a pagar, paga | — |
+| **Produtividade do corretor** | Leads, visitas, propostas, vendas, prazo cumprido, nota das visitas |
+| **Desempenho da IA** | % qualificados, visitas marcadas, passagens para humano e motivos, custo por lead |
+| **SaaS (console RE9)** | MRR, clientes ativos, churn, conversão do teste, uso por plano |
 
 ---
 
-## 8. Roadmap faseado
+## 8. Roadmap
 
 As estimativas são para **1 pessoa sênior + Claude Code**, cumprindo a Definição de Pronto
-inteira (testes, invariantes, prova visual, tripla de migration). A ordem prioriza **valor
-percebido cedo** e **dependências**.
+inteira. São aproximadas e serão recalibradas ao fim da fase 1.
 
-| Fase | Épicos | Resultado para o cliente | Estimativa |
+| Fase | Épicos | Resultado | Estimativa |
 |---|---|---|---|
-| **0 — Fundação** | E0 | Fork instalável com marca própria e atualização a partir do upstream | 1–2 semanas |
-| **1 — "Já é imobiliário"** | E1 + ganchos de vocabulário | Onboarding imobiliário, funis, agente de vendas/locação com o estoque via planilha ou ERP (`banco_externo`), follow-ups. **Já vendável** | 2–3 semanas |
-| **2 — Estoque e IA de verdade** | E2, E4, E5, E6 (básico), E7 (entrada Grupo OLX + feed VRSync) | Cadastro de imóveis com mapa, match, IA buscando o estoque real e agendando visita, leads do ZAP/VivaReal/OLX e publicação neles | 6–8 semanas |
-| **3 — Operação comercial completa** | E8, E3, E9, E10, E11, E17 (básico) | Roleta com SLA, equipes, captação com ACM, propostas, documentos e contratos com assinatura, comissões, app do corretor | 8–10 semanas |
-| **4 — Lançamentos e vitrine** | E12, E14, E16, E7 (demais portais, Meta Lead Ads) | Espelho de vendas, site/landing, BI completo | 6–8 semanas |
-| **5 — Locação e portais externos** | E13, E15 (PLD completo), E18 | Administração de locação ponta a ponta, portal do proprietário e do inquilino | 8–12 semanas |
+| **0 — Fundação** | E0 | Fork com a marca ImobCRM, staging e produção, deploy pelo CI, backup testado | 1–2 semanas |
+| **1 — RE9 Imob operando** | E1, E2 (cadastro, fotos, mapa), E5 (busca + visita básica) | **A RE9 Imob opera no ImobCRM**: funis, estoque próprio, agente de vendas buscando o estoque real e marcando visita | 4–5 semanas |
+| **2 — Portais e match** | E7 (Grupo OLX + Imovelweb), E4, E6, E14 (básica), E5 (completo), E15 (CRECI) | Leads dos portais com resposta instantânea, publicação automática, match, visitas completas, vitrine | 6–8 semanas |
+| **3 — Operação completa + SaaS** | E8, E3, E9, E10 (DocuSeal), E11, E16, E17, E19, E15 (PLD) | Roleta com prazo, captação com ACM, propostas, contratos assinados, comissões, BI, app do corretor, **venda para outras imobiliárias** | 10–12 semanas |
+| **4 — Expansão (opcional)** | E12, E14 (completa), Meta Lead Ads | Lançamentos e landing pages | 6–8 semanas |
 
-**Total:** cerca de 8 a 10 meses para 100% do escopo. As fases 1 e 2 (cerca de 3 meses) já
-entregam um produto competitivo contra os CRMs imobiliários do mercado, com o diferencial de IA
-nativa e self-host.
+A **RE9 Imob opera de verdade a partir da fase 1** e valida cada fase seguinte. A comercialização
+para terceiros começa ao fim da fase 3.
 
 ---
 
 ## 9. Riscos e mitigação
 
-| Risco | Impacto | Mitigação |
-|---|---|---|
-| Conflito com o upstream (migrations, `baseline.sql`) | Merge semanal vira retrabalho | Código em pastas próprias. Schema na função provisionadora do módulo, com **um** bloco no apêndice. Faixa de numeração própria. Ganchos genéricos devolvidos ao upstream via PR |
-| O upstream muda uma API interna usada pelo módulo | Quebra silenciosa | O módulo só usa helpers canônicos (`ok`/`fail`, `requireRole`, `audit`, `createAdminClient`) e tem testes próprios no CI do fork |
-| Formato de portal muda | Leads param de entrar | Normalizador com detecção estrita, registro de todo payload em `webhook_lead_captures`, alerta na Central quando um portal para de mandar lead há X horas (laço de retorno do Sistema Vivo) |
-| IA alucina imóvel ou promete financiamento | Dano jurídico e de marca | Busca estruturada obrigatória (a IA não "inventa"), gates `availability_truth` e `financing_promise`, corpus de avaliação no CI |
-| Custo de IA por organização | Margem | Orçamento por organização já existe (`ai_budgets`), modelo menor para classificação, cache de embeddings |
-| Dados sensíveis (documentos) | Incidente LGPD | Bucket privado, URL assinada curta, auditoria de download, classificação de sensibilidade, retenção |
-| Cota de armazenamento (Supabase gratuito = 1 GB) | Fotos lotam o banco | Compressão no cliente (WebP, ≤ 300 KB), limite por imóvel configurável e aviso de cota. Recomendar storage S3 compatível na VPS para operações grandes |
-| Escopo grande demais | Nunca termina | Fases vendáveis: a fase 1 já é produto. Cada épico tem aceite próprio |
+| Risco | Mitigação |
+|---|---|
+| Conflito com o upstream | Pastas próprias, faixa de migrations, bloco único no baseline, ganchos genéricos devolvidos por PR |
+| API interna do upstream muda | O vertical usa só helpers canônicos (`ok`/`fail`, `requireRole`, `audit`) e tem testes próprios no CI |
+| Portal muda o formato ou para de mandar lead | Detecção estrita, todo payload guardado em `webhook_lead_captures`, **alerta na Central** quando um portal fica X horas sem lead |
+| IA alucina imóvel ou promete financiamento | Busca estruturada obrigatória, gates `availability_truth` e `financing_promise`, corpus da RE9 Imob no CI |
+| Custo de IA e de WhatsApp no SaaS | Orçamento por organização (existe) e limites por plano; API oficial da Meta com custo na conta do cliente |
+| Um cliente derruba os outros (SaaS) | Rate limit por organização, filas por organização, limites de plano, monitoramento |
+| Dados sensíveis | Bucket privado, URL curta, auditoria de download, classificação, retenção, DPA |
+| Armazenamento de fotos cresce | WebP ≤ 300 KB, limite por plano, migração para MinIO/R2 prevista |
+| DocuSeal: recurso necessário ser só da versão Pro | Adaptador trocável. Alternativa gratuita: PDF assinado com PAdES (já existe) + aceite registrado |
+| Escopo grande | Fases com valor próprio, e a RE9 Imob usando desde a fase 1 |
 
 ---
 
 ## 10. Definição de pronto do vertical
 
-Além dos 18 itens do `CLAUDE.md`, todo épico imobiliário cumpre estes critérios:
+Além dos 18 itens do `CLAUDE.md`, todo épico cumpre estes critérios:
 
-1. **Prova pela tela como um corretor leigo**, em ambiente fresco estilo VPS, com o módulo
-   instalado **e** sem o módulo (o núcleo continua íntegro). Evidência em `evidence/imob-<épico>/`.
-2. **Invariante de isolamento** entre 2 organizações para toda tabela nova, incluindo o feed XML e
-   a vitrine pública, que usam cliente de serviço.
-3. **Prova em par** para todo caminho que passa pela IA.
-4. **Cascata de LGPD** alcançando as tabelas novas que guardam pessoa (ADR-0002 D8).
-5. **Laço de retorno declarado:** o que acontece quando dá errado (portal parou, feed com erro,
-   reserva expirou, cobrança falhou, chave não devolvida) aparece na Central com próximo passo.
-6. **Porta na navegação** (`lib/navigation/catalogo.ts`) com `modulo: "imobiliario"`.
-7. **Fragmento em `.changes/`** descrevendo o efeito para quem opera a VPS.
+1. **Prova pela tela como um corretor leigo**, em ambiente fresco, com evidência em
+   `evidence/imob-<épico>/`.
+2. **Isolamento entre 2 organizações** para toda tabela nova, inclusive feeds e vitrine (cliente de
+   serviço com `organization_id` resolvido do token ou do domínio).
+3. **Prova em par** em todo caminho que passa pela IA.
+4. **Cascata de LGPD** alcançando as tabelas novas que guardam pessoa, respeitando a retenção
+   legal.
+5. **Laço de retorno:** portal parado, feed com erro, chave não devolvida, assinatura pendente e
+   cobrança falhada aparecem na Central com o próximo passo.
+6. **Porta na navegação** (`lib/navigation/catalogo.ts`).
+7. **Fragmento em `.changes/`** e nota no changelog do ImobCRM.
 
 ---
 
-## 11. Decisões que dependem do dono do produto
-
-Estas perguntas mudam a ordem ou o escopo. Cada uma traz a recomendação técnica, que vale como
-padrão se não houver outra resposta.
+## 11. Decisões ainda em aberto
 
 | # | Pergunta | Recomendação |
 |---|---|---|
-| 1 | **Qual segmento vem primeiro?** Imobiliária de usados (venda + locação), lançamentos/incorporadora, ou administradora de locação? | **Imobiliária de usados**: maior volume de clientes e o que mais se beneficia de IA + portais. Lançamentos na fase 4, administração na fase 5 |
-| 2 | **Estratégia de fork**: fork vivo acompanhando o upstream (opção C) ou hard fork? | **Fork vivo (C)**: você continua recebendo segurança e melhorias de IA de graça |
-| 3 | **O produto continua instalável por qualquer um** (open source, self-host) ou vira SaaS operado por você? | Manter self-host (é o que o código já faz bem) e, se quiser, operar instâncias gerenciadas para clientes. Isso muda a prioridade de billing e multi-organização |
-| 4 | **Qual o nome e a marca** do produto imobiliário? | Configurável pelo banco. Basta decidir o nome, a cor e o logo |
-| 5 | **Seus clientes já usam um ERP imobiliário** (Vista, Jetimob, Kenlo, Imobzi…)? O Deskcomm substitui ou convive com ele? | Convive na fase 1 (a IA lê o ERP via `banco_externo` ou importação XML) e substitui a partir da fase 2 |
-| 6 | **Quais portais seus clientes pagam hoje?** | Grupo OLX (ZAP + VivaReal + OLX) primeiro, porque cobre a maior parte do mercado |
-| 7 | **Gateway de cobrança e assinatura eletrônica preferidos?** | Asaas (boleto/Pix) e ZapSign (custo baixo, API simples). Ambos atrás de adaptador trocável |
-| 8 | **Há clientes-piloto** para validar a fase 1? | Ter 2 ou 3 imobiliárias piloto desde a fase 1: o corpus de conversas reais define a qualidade do agente |
+| A | **Quem paga a IA?** A RE9 fornece a chave e embute o custo no plano, ou cada imobiliária cadastra a própria chave? | **A RE9 fornece**, com créditos mensais por plano e excedente cobrado. Um leigo não sabe criar chave de API, e o controle de gasto por organização já existe |
+| B | **WhatsApp padrão:** API oficial da Meta ou WAHA (QR)? | **API oficial** para SaaS (estável, sem risco de banimento por QR, sem licença WAHA). WAHA como opção para quem não tem conta Meta verificada |
+| C | **Lançamentos** entram no roadmap (fase 4) ou saem? | Manter como opcional. Decidir ao fim da fase 3, com a demanda dos clientes |
+| D | **Domínio** do ImobCRM (ex.: `imobcrm.com.br`) já está registrado? | Registrar o `.com.br` e o `.com` antes da fase 2 (vitrine e e-mails) |
+| E | **Banco PJ** para cobrar a assinatura (Inter, Efí, outro)? | O que a RE9 já usa, se tiver API de cobrança Pix |
 
 ---
 
@@ -777,16 +713,17 @@ padrão se não houver outra resposta.
 |---|---|---|
 | Inbox | **Adaptar** | Painel lateral ganha "Perfil de busca", "Imóveis enviados/de interesse" e "Agendar visita" |
 | Radar | Manter | Crítico no ciclo longo |
-| Agenda | **Adaptar** | Vira agenda de visitas (imóvel, chave, check-in, roteiro) e perde os textos de clínica |
-| Respostas rápidas | Manter | Semear scripts imobiliários |
-| Funis (kanban) | **Adaptar** | Card com miniatura, bairro e preço do imóvel principal (troca de faixa, sem crescer). Filtros por finalidade, bairro e faixa |
-| Contatos / ficha 360 | **Adaptar** | Abas "Perfil de busca", "Imóveis (proprietário)", "Documentos" |
+| Agenda | **Adaptar** | Agenda de visitas (imóvel, chave, check-in, roteiro), sem os textos de clínica |
+| Respostas rápidas | Manter | Semear scripts de venda |
+| Funis (kanban) | **Adaptar** | Card com miniatura, bairro e preço do imóvel (troca de faixa, sem crescer). Filtros por bairro, tipo e faixa |
+| Contatos / ficha 360 | **Adaptar** | Abas "Perfil de busca", "Imóveis (proprietário)" e "Documentos" |
 | Tarefas, Campanhas, Chamadas | Manter | Campanha ganha filtro por perfil de busca |
 | Produtos | **Esconder** | Substituído por Imóveis (o código de fotos é reaproveitado) |
 | Comandas, Faturamento de comanda, Financeiro de comanda | **Esconder** | Conceitos reaproveitados na comissão |
-| Prospecção (Google Maps B2B) | **Esconder** | Opcional para parcerias com construtoras |
+| Prospecção (Google Maps B2B) | **Esconder** | — |
 | Nuvemshop | **Esconder** | — |
+| Dados externos (banco externo) | **Esconder** | Sem ERP (decisão 5) |
 | IA (agentes, roteadores, follow-ups, conhecimento, skills, casos…) | Manter | Com conteúdo imobiliário semeado |
-| Conexões, Webhooks, Anúncios Meta, Auditoria, LGPD, Equipe, Configurações, Extensões | Manter | Configurações ganham "Portais", "CRECI e compliance", "Comissões" |
+| Conexões, Webhooks, Anúncios Meta, Auditoria, LGPD, Equipe, Configurações, Extensões | Manter | Configurações ganham "Portais", "CRECI e compliance", "Comissões" e "Assinatura e plano" |
 | Desempenho | **Adaptar** | Abas imobiliárias (§7) |
-| **Novas** | — | Imóveis, Empreendimentos/Espelho, Captação/ACM, Match, Propostas, Contratos, Comissões, Locação, Portais, Painel do corretor, App móvel, Vitrine pública |
+| **Novas** | — | Imóveis, Captação/ACM, Match, Propostas, Contratos, Comissões, Portais, Painel do corretor, App móvel, Vitrine pública, Console SaaS; Empreendimentos/Espelho (opcional) |
