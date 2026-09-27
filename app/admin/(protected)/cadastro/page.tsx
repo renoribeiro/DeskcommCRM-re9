@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { loadAuthUser } from "@/lib/auth/server";
+import { env } from "@/lib/env";
 import { haAvisoDeTrocaDeModo } from "@/lib/auth/aviso-da-troca-de-modo";
 import { modoDeCadastro } from "@/lib/auth/politica-de-cadastro";
 import { listPendingRegistrationRequests } from "@/lib/auth/registration-requests";
@@ -57,7 +58,7 @@ export default async function Page() {
   const kitSincroniza = process.env.SINGLE_SERVER === "1";
   // Instalação pelo Dokploy (docker-compose.dokploy.yml): o GoTrue lê o
   // DISABLE_SIGNUP do Environment do serviço, e só um novo Deploy o aplica.
-  const viaDokploy = process.env.DEPLOY_MODE === "dokploy";
+  const viaDokploy = env.DEPLOY_MODE === "dokploy";
   const alvoDoGoTrue = modo === "so_convite" ? "true" : "false";
 
   return (

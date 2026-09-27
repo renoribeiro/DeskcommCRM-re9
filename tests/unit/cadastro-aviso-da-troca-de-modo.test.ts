@@ -64,6 +64,12 @@ import { updateSignupMode } from "@/app/actions/settings/updateSignupMode";
 import { disableSignupEsperado } from "@/lib/auth/aviso-da-troca-de-modo";
 
 import Page from "@/app/admin/(protected)/cadastro/page";
+import { env } from "@/lib/env";
+
+const DEPLOY_MODE_ORIGINAL = env.DEPLOY_MODE;
+afterEach(() => {
+  env.DEPLOY_MODE = DEPLOY_MODE_ORIGINAL;
+});
 
 const TITULO = "A troca de modo ainda não chegou ao servidor.";
 const FRASE_DA_ISSUE =
@@ -224,7 +230,9 @@ describe("com Supabase separado, o update.sh não leva o modo ao GoTrue", () => 
 describe("instalação pelo Dokploy: quem leva o modo ao GoTrue é o Environment + Deploy", () => {
   it("'só convite' com o GoTrue aberto → ensina a chave no Environment do Dokploy, sem update.sh nem painel da nuvem", async () => {
     vi.stubEnv("SINGLE_SERVER", "0");
-    vi.stubEnv("DEPLOY_MODE", "dokploy");
+    // A página lê `env` (lib/env.ts), validado no import: `vi.stubEnv` não
+    // chegaria a ela. O afterEach devolve o valor.
+    env.DEPLOY_MODE = "dokploy";
     cena.modo = "so_convite";
     cena.settings = { disable_signup: false };
 

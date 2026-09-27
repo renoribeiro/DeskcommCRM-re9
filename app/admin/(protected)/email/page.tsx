@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { loadAuthUser } from "@/lib/auth/server";
+import { env } from "@/lib/env";
 import { getSmtpConfig } from "@/lib/email/config";
 import { transporteEmVigor } from "@/lib/email/roteador";
 import { CATALOGO_DA_INSTALACAO } from "@/lib/instalacao/catalogo";
@@ -73,7 +74,7 @@ export default async function Page() {
   // Instalação pelo Dokploy: o SMTP salvo aqui vale para os e-mails do CRM, mas
   // o login (GoTrue) lê as SMTP_* do Environment do serviço — o kit copia de um
   // para o outro no update.sh; no Dokploy, quem copia é a pessoa, e esta tela diz.
-  const viaDokploy = process.env.DEPLOY_MODE === "dokploy";
+  const viaDokploy = env.DEPLOY_MODE === "dokploy";
   const idioma = normalizarIdioma(usuario.locale);
 
   const formulario = (

@@ -100,6 +100,7 @@ FIXAS = {
     "NODE_ENV": "é produção, sempre",
     "SUPABASE_DB_ADMIN_URL": "forçada vazia: a URL de admin é do kit com Supabase de fora",
     "INTERNAL_AGENT_RUN_STUB": "o trace falso do :test nunca vai para produção",
+    "DEPLOY_MODE": "é 'dokploy' por definição: este arquivo É a instalação pelo Dokploy, e as telas de /admin leem isso",
     "NEXT_PUBLIC_APP_URL": "deriva de DOMAIN", "NEXT_PUBLIC_ADMIN_URL": "deriva de DOMAIN",
     "NEXT_PUBLIC_SUPABASE_URL": "deriva de DOMAIN",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY": "vem de ANON_KEY (o nome do gerar-env)",
@@ -224,6 +225,8 @@ print(" ".join(r) or "ok")
 PY
 )"
   check "todo serviço interno tem apelido único imobcrm-* e nenhum endereço usa o nome cru" igual "$apelidos" ok
+  check "DEPLOY_MODE=dokploy chega a app e worker (as telas de /admin ensinam o Environment)" \
+    igual "$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1]))["services"]; print(s["app"]["environment"].get("DEPLOY_MODE"), s["worker"]["environment"].get("DEPLOY_MODE"))' "$WORK/cfg.json")" 'dokploy dokploy'
   check "o scheduler chama o app pelo apelido único" \
     igual "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["services"]["scheduler"]["environment"].get("SCHEDULER_APP_ORIGIN"))' "$WORK/cfg.json")" 'http://imobcrm-app:3000'
   gwcfg="$(python3 - "$WORK/cfg.json" <<'PY'
