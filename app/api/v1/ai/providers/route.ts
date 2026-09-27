@@ -18,6 +18,7 @@ import { z } from "zod";
 
 import { fail, ok } from "@/lib/api/wrappers";
 import { audit } from "@/lib/audit";
+import { motivoDaRecusaDeDestino } from "@/lib/automation/destinos-internos-autorizados";
 import { requireRole } from "@/lib/auth/require-role";
 import { roleAtLeast } from "@/lib/auth/types";
 import {
@@ -236,7 +237,7 @@ const corpoDoPut = z.object({
     }),
   model_id: z.string().min(1),
   credential_id: z.string().uuid().nullable().optional(),
-  base_url: z.string().url().nullable().optional(),
+  base_url: z.string().url().max(2048).nullable().optional(),
   is_enabled: z.boolean().optional(),
 });
 
@@ -254,6 +255,26 @@ export async function PUT(req: NextRequest): Promise<Response> {
     return fail("invalid_body", t("corpo inválido"), 422, { details: parsed.error.issues });
   }
   const corpo = parsed.data;
+
+  // O `base_url` é escolha de uma ORGANIZAÇÃO e quem chama é o servidor, com a
+  // chave (auditoria P4, `docs/imobiliario/04-…`). Sem a régua de destino, o
+  // admin de uma empresa apontava openrouter/deepseek/requesty para a rede
+  // interna da instalação (loopback, metadado de nuvem, serviços do compose) e
+  // o motor mandava a chave para lá. É a mesma régua da credencial do provedor
+  // personalizado (`validateCustomKey`). O motor TAMBÉM julga a cada chamada
+  // (`fetchParaDestinoDaOrganizacao`), porque um nome pode passar a resolver
+  // para IP interno depois de gravado.
+  if (corpo.base_url) {
+    const recusa = await motivoDaRecusaDeDestino(corpo.base_url, "organizacao");
+    if (recusa) {
+      return fail(
+        "base_url_recusada",
+        t("o endereço (base URL) aponta para um destino que esta instalação não permite"),
+        422,
+        { details: { motivo: recusa } },
+      );
+    }
+  }
 
   const ponto = PONTO_POR_ID.get(corpo.purpose);
   if (!ponto) return fail("ponto_desconhecido", `"${corpo.purpose}" não é um ponto do sistema`, 404);

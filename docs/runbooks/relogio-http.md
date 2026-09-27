@@ -68,7 +68,7 @@ Se o workflow existir só numa branch de trabalho, o cron **nunca** dispara.
 |------|------|--------|
 | Variable | `RELOGIO_LIGADO` | `1` |
 | Secret | `RELOGIO_APP_URL` | `https://SEU-DOMINIO` (sem barra no fim) |
-| Secret | `RELOGIO_SECRET` | o mesmo `INTERNAL_SECRET` do `.env` da sua instalação |
+| Secret | `RELOGIO_SECRET` | o `INTERNAL_CRON_SECRET` do `.env` da sua instalação (**não** o `INTERNAL_SECRET` — ver abaixo) |
 
 3. Actions → **relogio** → Run workflow (teste manual).
 4. Espere o schedule `*/5` (o GitHub atrasa; 5–15 min é normal).
@@ -77,8 +77,21 @@ Se o workflow existir só numa branch de trabalho, o cron **nunca** dispara.
 # Via CLI (com permissão de secrets no repo)
 gh variable set RELOGIO_LIGADO -R SEU_USER/DeskcommCRM -b 1
 gh secret set RELOGIO_APP_URL -R SEU_USER/DeskcommCRM -b "https://SEU-DOMINIO"
-gh secret set RELOGIO_SECRET -R SEU_USER/DeskcommCRM -b "$INTERNAL_SECRET"
+gh secret set RELOGIO_SECRET -R SEU_USER/DeskcommCRM -b "$INTERNAL_CRON_SECRET"
 ```
+
+### Por que `INTERNAL_CRON_SECRET`, e não `INTERNAL_SECRET`
+
+O segredo que você cadastra aqui fica guardado num serviço de **terceiros**
+(GitHub, cron-job.org). O `INTERNAL_SECRET` serve para mais coisas além de
+bater no relógio — a chave que assina o retorno dos OAuth (Google, Nuvemshop)
+é derivada dele. O `INTERNAL_CRON_SECRET` só abre as rotas de cron, e o tick
+aceita os dois (`app/api/v1/system/relogio/tick/route.ts`). Se o seu `.env`
+não tem `INTERNAL_CRON_SECRET` (instalação antiga), gere um
+(`openssl rand -hex 32`), acrescente ao `.env`, recrie o `app` e use esse.
+
+Se você já cadastrou o `INTERNAL_SECRET` num desses serviços, troque pelo
+`INTERNAL_CRON_SECRET` e depois **gire** o `INTERNAL_SECRET`.
 
 ## Opção B — cron-job.org (grátis, a cada 1 minuto)
 
@@ -89,14 +102,14 @@ Melhor latência que o Actions. Conta free permite job a cada minuto.
    - **URL:** `https://SEU-DOMINIO/api/v1/system/relogio/tick`
    - **Schedule:** every 1 minute
    - **Request method:** POST
-   - **Header:** `Authorization` = `Bearer <INTERNAL_SECRET>`
+   - **Header:** `Authorization` = `Bearer <INTERNAL_CRON_SECRET>`
 3. Enable e rode "Execute now".
 
 O curl equivalente:
 
 ```bash
 curl -fsS -X POST \
-  -H "Authorization: Bearer $INTERNAL_SECRET" \
+  -H "Authorization: Bearer $INTERNAL_CRON_SECRET" \
   "https://SEU-DOMINIO/api/v1/system/relogio/tick"
 ```
 

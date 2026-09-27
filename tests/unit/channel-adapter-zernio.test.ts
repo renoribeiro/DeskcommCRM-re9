@@ -20,6 +20,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
+// DNS controlado: todo nome resolve para um IP PÚBLICO. Sem isto, os casos de
+// mídia dependiam da rede do executor (e o de host de terceiro nem resolvia).
+vi.mock("node:dns/promises", () => {
+  const lookup = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
+  return { lookup, default: { lookup } };
+});
+
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({}) }));
 
 const credsRef: { current: unknown } = { current: null };
@@ -28,7 +35,7 @@ vi.mock("@/lib/channels/zernio/credentials", () => ({
   zernioCredsFromEnv: () => credsRef.current,
 }));
 
-import { zernioAdapter } from "@/lib/channels/adapters/zernio";
+import { ehEndpointDeMidiaDoProvedor, zernioAdapter } from "@/lib/channels/adapters/zernio";
 
 const CREDS = {
   accountId: "6a3572a15f7d1751ab117832",
@@ -381,5 +388,78 @@ describe("fetchInboundMedia não busca onde o payload mandar", () => {
     });
     expect(r.mime).toBe("image/png");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Auditoria P1 (d) (docs/imobiliario/04-auditoria-seguranca-e-qualidade.md):
+ * o guard anti-SSRF recusava endereço INTERNO, mas a API key da organização
+ * ainda ia para qualquer host PÚBLICO que o payload nomeasse. Agora a chave só
+ * acompanha o endpoint de mídia do próprio provedor.
+ */
+describe("fetchInboundMedia só leva a chave ao provedor", () => {
+  function okPng() {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new ArrayBuffer(4),
+      headers: new Headers({ "content-type": "image/png" }),
+    });
+  }
+  const initDa = (n: number) =>
+    (fetchMock.mock.calls[n]?.[1] ?? {}) as { headers?: Record<string, string>; redirect?: string };
+
+  it("host público de terceiro: busca SEM Authorization", async () => {
+    credsRef.current = CREDS;
+    fetchMock.mockClear();
+    okPng();
+    await zernioAdapter.fetchInboundMedia!({
+      organizationId: ORG,
+      sessionRef: CREDS.accountId,
+      url: "https://atacante.example.com/api/v1/media/abc",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(initDa(0).headers?.Authorization).toBeUndefined();
+  });
+
+  it("endpoint de mídia do provedor: leva o Bearer, sem seguir redirect", async () => {
+    credsRef.current = CREDS;
+    fetchMock.mockClear();
+    okPng();
+    await zernioAdapter.fetchInboundMedia!({
+      organizationId: ORG,
+      sessionRef: CREDS.accountId,
+      url: "https://zernio.com/api/v1/media/abc123",
+    });
+    expect(initDa(0).headers?.Authorization).toBe(`Bearer ${CREDS.apiKey}`);
+    expect(initDa(0).redirect).toBe("manual");
+  });
+
+  it("redirect do provedor é seguido SEM a chave", async () => {
+    credsRef.current = CREDS;
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 302,
+      headers: new Headers({ location: "https://cdn.example.net/arquivo.png?sig=1" }),
+    });
+    okPng();
+    await zernioAdapter.fetchInboundMedia!({
+      organizationId: ORG,
+      sessionRef: CREDS.accountId,
+      url: "https://zernio.com/api/v1/media/abc123",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe("https://cdn.example.net/arquivo.png?sig=1");
+    expect(initDa(1).headers?.Authorization).toBeUndefined();
+  });
+
+  it("ehEndpointDeMidiaDoProvedor: mesma origem e prefixo /v1/ da base", () => {
+    const base = "https://zernio.com/api";
+    expect(ehEndpointDeMidiaDoProvedor(new URL("https://zernio.com/api/v1/media/x"), base)).toBe(true);
+    expect(ehEndpointDeMidiaDoProvedor(new URL("https://zernio.com.evil.io/api/v1/x"), base)).toBe(false);
+    expect(ehEndpointDeMidiaDoProvedor(new URL("http://zernio.com/api/v1/x"), base)).toBe(false);
+    expect(ehEndpointDeMidiaDoProvedor(new URL("https://zernio.com/outra/v1/x"), base)).toBe(false);
+    expect(ehEndpointDeMidiaDoProvedor(new URL("https://u:p@zernio.com/api/v1/x"), base)).toBe(false);
   });
 });

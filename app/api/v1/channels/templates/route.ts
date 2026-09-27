@@ -13,6 +13,7 @@ import { requireSupportWrite } from "@/lib/impersonate/support";
  */
 import { randomUUID } from "node:crypto";
 import type { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 
 import { fail, ok } from "@/lib/api/wrappers";
 import { requireRole } from "@/lib/auth/require-role";
@@ -221,6 +222,20 @@ export async function POST(_req: NextRequest): Promise<NextResponse> {
 }
 
 /**
+ * Corpo do PATCH (auditoria P10): validado por Zod, com teto. Os limites de
+ * `name`/`language` são os do envio de template (`sendMessageSchema`); cada
+ * valor é um link (`https://`, conferido por `mesclarValoresSalvos`) e um
+ * modelo tem poucos slots — 50 chaves e 2048 caracteres por link sobram.
+ */
+const corpoDoPatch = z.object({
+  name: z.string().min(1).max(512),
+  language: z.string().min(2).max(16),
+  values: z
+    .record(z.string().min(1).max(64), z.string().max(2048))
+    .refine((v) => Object.keys(v).length <= 50, { message: "no máximo 50 valores" }),
+});
+
+/**
  * Salva o link da mídia de um modelo, para o painel da janela fechada
  * pré-preencher no próximo disparo. Valor vazio esquece o link.
  *
@@ -240,24 +255,15 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
   const r = await orgOrFail(requestId);
   if (!r.autorizado) return r.resposta;
 
-  const body = (await req.json().catch(() => null)) as {
-    name?: unknown;
-    language?: unknown;
-    values?: unknown;
-  } | null;
-  const valores = body?.values;
-  if (
-    typeof body?.name !== "string" ||
-    typeof body?.language !== "string" ||
-    !valores ||
-    typeof valores !== "object" ||
-    Array.isArray(valores) ||
-    !Object.values(valores).every((v) => typeof v === "string")
-  ) {
+  const parsed = corpoDoPatch.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
     return fail("validation_failed", "esperado { name, language, values: { chave: link } }", 422, {
       requestId,
+      details: { issues: parsed.error.issues },
     });
   }
+  const body = parsed.data;
+  const valores = body.values;
 
   const admin = createAdminClient();
   const { data: linhas, error } = await admin
@@ -284,7 +290,7 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
     const m = mesclarValoresSalvos(
       contrato,
       (linha.saved_values ?? {}) as Record<string, unknown>,
-      valores as Record<string, string>,
+      valores,
     );
     if (!m.ok) {
       return fail("validation_failed", m.motivo, 422, { requestId, details: { chave: m.chave } });

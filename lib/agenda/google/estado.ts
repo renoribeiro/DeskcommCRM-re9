@@ -32,6 +32,7 @@
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { chaveDoEstadoOAuth } from "@/lib/auth/chave-do-estado-oauth";
 
 /** Dez minutos: o tempo de atravessar a tela de consentimento, e nada além. */
 export const VALIDADE_DO_ESTADO_MS = 10 * 60 * 1000;
@@ -48,7 +49,9 @@ export interface EstadoDaConexao {
 }
 
 function assinar(carga: string, segredo: string): Buffer {
-  return createHmac("sha256", segredo).update(carga, "utf8").digest();
+  // Chave derivada, nunca o segredo cru (auditoria P7): o `INTERNAL_SECRET`
+  // também é bearer de cron. Ver `lib/auth/chave-do-estado-oauth.ts`.
+  return createHmac("sha256", chaveDoEstadoOAuth(segredo)).update(carga, "utf8").digest();
 }
 
 function conferirSegredo(segredo: string): string {

@@ -78,6 +78,25 @@ function attachmentFields(env: OutboundEnvelope): Record<string, unknown> {
   }
 }
 
+/**
+ * A URL é o endpoint de mídia do PRÓPRIO provedor — o único destino que pode
+ * receber a API key da organização? Mesma origem da base da credencial e
+ * caminho sob `<base>/v1/` (a base padrão é `https://zernio.com/api`).
+ */
+export function ehEndpointDeMidiaDoProvedor(url: URL, baseUrl: string | null | undefined): boolean {
+  if (!baseUrl) return false;
+  let base: URL;
+  try {
+    base = new URL(baseUrl);
+  } catch {
+    return false;
+  }
+  if (url.origin !== base.origin) return false;
+  if (url.username || url.password) return false;
+  const prefixo = `${base.pathname.replace(/\/+$/, "")}/v1/`;
+  return url.pathname.startsWith(prefixo) && !url.pathname.includes("/../");
+}
+
 export const zernioAdapter: ChannelAdapter = {
   provider: "zernio",
 
@@ -338,9 +357,31 @@ export const zernioAdapter: ChannelAdapter = {
     // graça o que dá (esquema, http em produção, literal IPv6, faixa privada)
     // e o outro paga o DNS e julga o IP resolvido, fechando o rebinding.
     assertSafeOutboundUrl(input.url);
-    await assertDestinoResolvidoSeguro(new URL(input.url).hostname);
+    const alvo = new URL(input.url);
+    await assertDestinoResolvidoSeguro(alvo.hostname);
 
-    const res = await fetch(input.url, zernioMediaFetchInit(creds.apiKey));
+    // Público não basta (auditoria P1, `docs/imobiliario/04-…`): o guard acima
+    // recusa endereço interno, mas deixava a API key do tenant ir para QUALQUER
+    // host público que o payload nomeasse. A chave só vai para o endpoint de
+    // mídia do PRÓPRIO provedor (mesma origem e prefixo `/v1/` da base da
+    // credencial); qualquer outro host — CDN, link assinado — é buscado SEM ela.
+    // Redirect não é seguido com a chave: é buscado de novo, sem ela e com o
+    // mesmo guard, para o `Location` não virar o desvio que o guard fechou.
+    const levaChave = ehEndpointDeMidiaDoProvedor(alvo, creds.baseUrl);
+    let res = await fetch(
+      alvo.toString(),
+      levaChave
+        ? { ...zernioMediaFetchInit(creds.apiKey), redirect: "manual" }
+        : { redirect: "manual" },
+    );
+    if (res.status >= 300 && res.status < 400) {
+      const destino = res.headers.get("location");
+      if (!destino) throw new Error(`zernio_media_failed: ${res.status} sem Location`);
+      const proximo = new URL(destino, alvo);
+      assertSafeOutboundUrl(proximo.toString());
+      await assertDestinoResolvidoSeguro(proximo.hostname);
+      res = await fetch(proximo.toString(), { redirect: "error" });
+    }
     if (!res.ok) {
       // 400 costuma ser mídia já descartada pela plataforma, e 401 credencial —
       // desfechos diferentes, e o status no erro é o que distingue os dois para

@@ -25,6 +25,16 @@
  *     false` — e quem chama grava ESSA verdade no log. Antes o log registrava
  *     `valid_signature = true` para evento não verificado.
  *
+ * Auditoria A2 (`docs/imobiliario/04-auditoria-seguranca-e-qualidade.md`)
+ * propôs "sessão com segredo de 16+ caracteres ⇒ assinatura obrigatória". NÃO
+ * adotada, de propósito: as sessões do canal por QR nascem com o placeholder
+ * de 1 byte (`fn_reserve_channel_connection` grava `'\x00'`), então o segredo
+ * que sobra é o do AMBIENTE — presente em toda instalação — e o WAHA Core não
+ * assina. A regra recusaria toda mensagem recebida. A exigência continua sendo
+ * da instalação (regra 2). Risco residual declarado: com WAHA Core, quem
+ * alcança a rota por token sem assinatura consegue injetar evento; a mitigação
+ * é de rede (abaixo) e o segredo do caminho (`webhook_path_token`).
+ *
  * A defesa que não depende do WAHA saber assinar é de rede: a rota global (sem
  * token) deixa de ser publicada pelo Caddy, porque o WAHA fala com o app pela
  * rede interna do Docker e nunca precisou dela pela internet. Ver Caddyfile.

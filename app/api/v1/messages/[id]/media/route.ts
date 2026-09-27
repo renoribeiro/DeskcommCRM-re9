@@ -20,6 +20,11 @@ import {
   type ChannelProvider,
   type ChannelSessionRef,
 } from "@/lib/channels";
+import { logger } from "@/lib/logger";
+import {
+  cabecalhosDeBytesDeFora,
+  podeExibirNoNavegador,
+} from "@/lib/messaging/media/cabecalhos-de-entrega";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -54,7 +59,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx): Promise<Response> {
   // Filtro explícito de organization_id por doutrina (defense-in-depth).
   const { data: msg, error } = await supabase
     .from("messages")
-    .select("id, media_url, media_mime, media_storage_path, channel_session_id")
+    .select("id, direction, media_url, media_mime, media_storage_path, channel_session_id")
     .eq("id", messageId)
     .eq("organization_id", activeOrg.orgId)
     .maybeSingle();
@@ -69,14 +74,22 @@ export async function GET(_req: NextRequest, ctx: RouteCtx): Promise<Response> {
     const admin = createAdminClient();
     const { data: signed, error: signErr } = await admin.storage
       .from("whatsapp-media")
-      .createSignedUrl(msg.media_storage_path, SIGNED_URL_TTL_S);
+      // Tipo fora da lista do que se exibe no navegador sai como DOWNLOAD
+      // também pela URL assinada (auditoria P3): numa instalação em que o
+      // Storage responde no mesmo domínio do app, um `.html` recebido seria
+      // interpretado ali mesmo.
+      .createSignedUrl(
+        msg.media_storage_path,
+        SIGNED_URL_TTL_S,
+        podeExibirNoNavegador(msg.media_mime) ? undefined : { download: true },
+      );
     if (!signErr && signed?.signedUrl) {
       const response = NextResponse.redirect(signed.signedUrl, 302);
       response.headers.set("X-Request-Id", requestId);
       return response;
     }
     if (signErr) {
-      console.error("[messages.media] createSignedUrl failed", signErr.message);
+      logger.error("[messages.media] createSignedUrl failed", { detail: signErr.message, requestId });
     }
   }
 
@@ -90,7 +103,13 @@ export async function GET(_req: NextRequest, ctx: RouteCtx): Promise<Response> {
   // conserto do worker removeu de lá e esqueceu aqui: com `fetchWahaMedia` em
   // duro, o path de um anexo do canal intermediado era procurado dentro do
   // contêiner do canal por QR — 404, e a tela dizia "mídia indisponível".
-  if (msg.media_url) {
+  //
+  // Só para mensagem RECEBIDA (auditoria P1): `media_url` de saída nunca foi
+  // do canal — era texto que o cliente da API escrevia, e buscá-lo aqui pelo
+  // adapter levava a credencial do canal (no WAHA, a da instalação inteira)
+  // para onde esse texto apontasse. Linhas antigas de saída com `media_url`
+  // gravado caem no 404 abaixo.
+  if (msg.media_url && msg.direction === "inbound") {
     try {
       const admin = createAdminClient();
       const { data: sessao } = await admin
@@ -116,10 +135,13 @@ export async function GET(_req: NextRequest, ctx: RouteCtx): Promise<Response> {
         url: msg.media_url,
         hintMime: msg.media_mime,
       });
+      // Bytes do REMETENTE servidos na origem do app (auditoria P3): o tipo
+      // declarado por ele só vale se estiver na lista do que o navegador pode
+      // exibir sem risco; o resto é download, sempre sob `sandbox` e `nosniff`.
       return new Response(new Uint8Array(media.buffer), {
         status: 200,
         headers: {
-          "Content-Type": media.mime,
+          ...cabecalhosDeBytesDeFora(media.mime),
           "Cache-Control": "private, max-age=60",
           "X-Request-Id": requestId,
         },

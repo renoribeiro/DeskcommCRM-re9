@@ -10,7 +10,10 @@ describe("tarefas do relógio", () => {
   it("o curl aponta para o tick e não interpola o segredo", () => {
     const cmd = comandoCurlDoRelogio("https://crm.exemplo.com/");
     expect(cmd).toContain("https://crm.exemplo.com" + CAMINHO_DO_TICK);
-    expect(cmd).toContain("$INTERNAL_SECRET");
+    // O segredo que vai para um serviço de terceiros é o do cron, não o
+    // INTERNAL_SECRET (auditoria P7).
+    expect(cmd).toContain("$INTERNAL_CRON_SECRET");
+    expect(cmd).not.toContain("$INTERNAL_SECRET");
     expect(cmd).not.toMatch(/Bearer [a-zA-Z0-9]{8,}/);
   });
 

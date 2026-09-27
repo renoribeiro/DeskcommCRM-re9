@@ -242,6 +242,15 @@ export function createDefaultRegistry(opts?: {
       return allowlistedFetch(url, init, { allowlist: allow });
     };
   };
+  /**
+   * Endereço do PAINEL (escolha de uma organização) passa pela régua de destino
+   * a cada chamada, além da allowlist (auditoria P4, `docs/imobiliario/04-…`):
+   * a allowlist vira a do próprio `baseUrl`, então sozinha ela AUTORIZAVA um
+   * `http://10.0.0.5` gravado no painel. Sem `baseUrl`, o endpoint é a constante
+   * do fabricante e só a allowlist vale — como antes.
+   */
+  const containDaOrganizacao = (baseUrl: string | undefined, endpoint: string): typeof fetch =>
+    baseUrl ? fetchParaDestinoDaOrganizacao(contain(endpoint)) : contain(endpoint);
   return {
     anthropic: (apiKey, modelId) =>
       createAnthropic({ apiKey, fetch: contain(ANTHROPIC_ENDPOINT) })(modelId),
@@ -268,7 +277,7 @@ export function createDefaultRegistry(opts?: {
         apiKey,
         baseURL: endpoint,
         headers: cabecalhosDeAtribuicaoOpenRouter(),
-        fetch: contain(endpoint),
+        fetch: containDaOrganizacao(baseUrl, endpoint),
       });
       // Chat Completions, NÃO Responses: a OpenRouter fala a API da OpenAI
       // (chat/completions). O `createOpenAI()(modelId)` desta versão do SDK usa
@@ -288,7 +297,7 @@ export function createDefaultRegistry(opts?: {
      */
     deepseek: (apiKey, modelId, baseUrl) => {
       const endpoint = baseUrl ?? DEEPSEEK_ENDPOINT;
-      const contido = contain(endpoint);
+      const contido = containDaOrganizacao(baseUrl, endpoint);
       const fetchFinal =
         opts?.deepseekThinking === 'disabled' ? comRaciocinioDesligado(contido) : contido;
       return createOpenAI({ apiKey, baseURL: endpoint, fetch: fetchFinal })(modelId);
@@ -301,7 +310,11 @@ export function createDefaultRegistry(opts?: {
      */
     requesty: (apiKey, modelId, baseUrl) => {
       const endpoint = baseUrl ?? REQUESTY_ENDPOINT;
-      return createOpenAI({ apiKey, baseURL: endpoint, fetch: contain(endpoint) }).chat(modelId);
+      return createOpenAI({
+        apiKey,
+        baseURL: endpoint,
+        fetch: containDaOrganizacao(baseUrl, endpoint),
+      }).chat(modelId);
     },
     /**
      * Provedor personalizado (#1642): o endpoint É DO OPERADOR e vem na

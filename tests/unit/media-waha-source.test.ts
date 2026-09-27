@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { fetchWahaMedia } from "@/lib/messaging/media/waha-source";
+import { caminhoDeArquivoDoWaha, fetchWahaMedia } from "@/lib/messaging/media/waha-source";
 import { MediaTooLargeError } from "@/lib/messaging/media/types";
 
 const WAHA_BASE = "http://localhost:3030";
@@ -40,10 +40,8 @@ describe("fetchWahaMedia", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await fetchWahaMedia("http://evil.example.com/api/files/x.jpg?q=1");
-    expect(fetchMock).toHaveBeenCalledWith(
-      `${WAHA_BASE}/api/files/x.jpg?q=1`,
-      expect.anything(),
-    );
+    // A query também cai (auditoria P1): arquivo do WAHA não precisa dela.
+    expect(fetchMock).toHaveBeenCalledWith(`${WAHA_BASE}/api/files/x.jpg`, expect.anything());
   });
 
   it("reescreve a porta interna anunciada pelo WAHA p/ a base real", async () => {
@@ -95,5 +93,51 @@ describe("fetchWahaMedia", () => {
 
   it("mapeia mediaUrl malformada p/ waha_media_untrusted_host", async () => {
     await expect(fetchWahaMedia("not-a-url")).rejects.toThrow("waha_media_untrusted_host");
+  });
+
+  /**
+   * Auditoria P1 (docs/imobiliario/04-auditoria-seguranca-e-qualidade.md): a
+   * API key do WAHA é da INSTALAÇÃO. Reconstruir só o host deixava qualquer
+   * endpoint da API alcançável com ela. O critério é `fetch` NÃO ser chamado.
+   */
+  describe("só busca caminho de arquivo do WAHA", () => {
+    const RECUSADAS = [
+      ["lista de sessões", "http://localhost:3000/api/sessions"],
+      ["conversas de outra sessão", "http://localhost:3000/api/outra/chats"],
+      ["travessia crua", "http://localhost:3000/api/files/../sessions"],
+      ["travessia codificada", "http://localhost:3000/api/files/%2e%2e/sessions"],
+      ["barra codificada", "http://localhost:3000/api/files/s%2F..%2Fx"],
+      ["barra invertida", "http://localhost:3000/api/files/s\\x.jpg"],
+      ["segmentos demais", "http://localhost:3000/api/files/a/b/c.jpg"],
+      ["segmento vazio", "http://localhost:3000/api/files//x.jpg"],
+      ["esquema não-http", "file:///api/files/x.jpg"],
+      ["sessão de outra organização", "http://localhost:3000/api/files/outra/ABC.bin"],
+    ] as const;
+
+    for (const [rotulo, url] of RECUSADAS) {
+      it(`recusa ${rotulo} — sem chamar fetch`, async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+        await expect(fetchWahaMedia(url, null, "sessao")).rejects.toThrow(
+          "waha_media_untrusted_host",
+        );
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+    }
+
+    it("aceita o formato real /api/files/<sessão>/<arquivo> da própria sessão", () => {
+      expect(
+        caminhoDeArquivoDoWaha("http://localhost:3000/api/files/sessao/false_5511@c.us_3EB0.jpeg", "sessao"),
+      ).toBe("/api/files/sessao/false_5511@c.us_3EB0.jpeg");
+    });
+
+    it("não segue redirect com a X-Api-Key", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(new ArrayBuffer(1), { status: 200, headers: { "content-type": "image/jpeg" } }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      await fetchWahaMedia(`${WAHA_BASE}/api/files/sessao/a.jpg`, null, "sessao");
+      expect(fetchMock.mock.calls[0]![1]).toMatchObject({ redirect: "error" });
+    });
   });
 });
