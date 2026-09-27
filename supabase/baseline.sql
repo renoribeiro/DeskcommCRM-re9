@@ -5425,7 +5425,7 @@ drop policy if exists "messages_insert" on public.messages;
 drop policy if exists "messages_update" on public.messages;
 drop policy if exists "messages_delete" on public.messages;
 
--- As três policies abaixo são as da migration 0439 (achado B1): a linha é de
+-- As três policies abaixo são as da migration 5000 (achado B1): a linha é de
 -- uma organização do usuário E a conversa apontada é da MESMA organização da
 -- linha. Redefinidas AQUI, no lugar da versão antiga, e não no fim do arquivo:
 -- uma versão intermediária diferente da final seria reinstalada a cada update
@@ -39260,8 +39260,8 @@ grant execute on function public.fn_metricas_links_rastreaveis(uuid) to service_
 
 notify pgrst, 'reload schema';
 
--- ---- endurecimento: definer sem ator e teto de tokens sem o efêmero (migration 0439) ----
--- Racional inteiro na migration 0439 (achados B2 e A5). Redefine função, então
+-- ---- endurecimento: definer sem ator e teto de tokens sem o efêmero (migration 5000) ----
+-- Racional inteiro na migration 5000 (achados B2 e A5). Redefine função, então
 -- fica ANTES da varredura de anon. `fn_resolve_inbound_number` só o servidor
 -- chama; `fn_colegas_podem_mexer_na_agenda` só responde pela organização de
 -- quem chama; o efêmero `agent-run:` do turno do agente sai do teto da 0415.
@@ -40406,8 +40406,8 @@ alter table public.crm_stages
   add constraint crm_stages_win_probability_range
   check (win_probability is null or win_probability between 0 and 100);
 
--- ---- endurecimento: mensagem presa à conversa, TRUNCATE e índices (migration 0439) ----
--- Racional inteiro na migration 0439 (achados B1, B3, B5, B6). Sem função
+-- ---- endurecimento: mensagem presa à conversa, TRUNCATE e índices (migration 5000) ----
+-- Racional inteiro na migration 5000 (achados B1, B3, B5, B6). Sem função
 -- criada. Fica no FIM do arquivo de propósito: o `revoke truncate` tem de vir
 -- depois de toda tabela do apêndice, porque o `ALTER DEFAULT PRIVILEGES ...
 -- GRANT ALL ON TABLES` do corpo do dump é reaplicado a cada `update.sh` e

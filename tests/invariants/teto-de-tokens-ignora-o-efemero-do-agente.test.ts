@@ -1,11 +1,11 @@
 /**
  * O TOKEN EFÊMERO DO TURNO DO AGENTE NÃO DISPUTA O TETO DOS HUMANOS
  * (achado A5 de `docs/imobiliario/04-auditoria-seguranca-e-qualidade.md`,
- * parte de banco; migration 0439).
+ * parte de banco; migration 5000).
  *
  * Cada turno do agente grava em `api_tokens` um token `agent-run:<run_id>`
  * com validade de 5 minutos (`lib/ai/runtime/mcp_token.ts`, mintado pelo admin
- * client — sem JWT). Até a 0439 o gatilho `trg_teto_de_tokens_ativos` (0415)
+ * client — sem JWT). Até a 5000 o gatilho `trg_teto_de_tokens_ativos` (0415)
  * contava esses tokens junto com os humanos: numa organização movimentada o
  * agente ocupava o teto de quem administra, e com o teto cheio o turno seguinte
  * do agente morria com PT409.
@@ -84,7 +84,7 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe("A5 — o efêmero do agente fica fora do teto de tokens (0439)", () => {
+describe("A5 — o efêmero do agente fica fora do teto de tokens (5000)", () => {
   it("efêmeros vivos não ocupam vaga: o humano ainda emite até o teto", async () => {
     for (let i = 0; i < 5; i++) {
       expect(await efemero(`pre${i}`)).toBeNull();

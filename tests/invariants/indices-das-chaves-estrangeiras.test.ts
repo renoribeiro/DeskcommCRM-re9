@@ -5,7 +5,7 @@ import { sql } from "./gov-helpers";
 /**
  * AS TABELAS GRANDES TÊM ÍNDICE EM TODA CHAVE ESTRANGEIRA DE UMA COLUNA
  * (achados B5 e B6 de `docs/imobiliario/04-auditoria-seguranca-e-qualidade.md`,
- * migration 0439).
+ * migration 5000).
  *
  * Sem índice no lado que referencia, o `on delete` da linha referenciada varre
  * a tabela inteira: apagar uma etapa varria `crm_leads`, apagar um lead varria
@@ -74,7 +74,7 @@ function fksSemIndice(): string[] {
   return out === "" ? [] : out.split("\n");
 }
 
-describe("B5 — chave estrangeira das tabelas grandes tem índice (0439)", () => {
+describe("B5 — chave estrangeira das tabelas grandes tem índice (5000)", () => {
   it("CONTROLE: a sonda acha FKs indexadas (senão o vazio abaixo não prova nada)", () => {
     const n = sql(`
       select count(*) from pg_constraint c
@@ -93,7 +93,7 @@ describe("B5 — chave estrangeira das tabelas grandes tem índice (0439)", () =
   });
 });
 
-describe("B6 — histórico que cresce tem índice iniciado por organization_id (0439)", () => {
+describe("B6 — histórico que cresce tem índice iniciado por organization_id (5000)", () => {
   it.each([
     "conversation_notes",
     "conversation_assignment_events",
