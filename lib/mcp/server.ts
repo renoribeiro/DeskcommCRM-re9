@@ -15,7 +15,9 @@ import type { z } from "zod";
 import type { ModuloOpcional } from "@/lib/instalacao/modulos";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { auditMcpToolCall } from "./audit";
+import { logger } from "@/lib/logger";
 import { ensureRole, ensureScope, type McpAuthResult } from "./auth";
+import { erroParaOCliente } from "./erro-para-o-cliente";
 import { verificarTetoMcp } from "./rate-limit";
 import { allTools } from "./tools";
 import { deModuloDesligado } from "./tools/catalog";
@@ -118,8 +120,19 @@ export function createMcpServer(
             structuredContent: result as Record<string, unknown>,
           };
         } catch (err) {
-          const message = err instanceof Error ? err.message : "unknown_error";
           const durationMs = Date.now() - startedAt;
+          // Recusa pensada para quem lê passa como está; falha inesperada
+          // (banco, rede, 5xx) vira texto genérico com o request_id, e o
+          // original fica no log e na auditoria — nunca no cliente.
+          const traduzido = erroParaOCliente(err, requestId);
+          if (traduzido.inesperado) {
+            logger.error("mcp.tool.unexpected_error", {
+              tool: tool.name,
+              request_id: requestId,
+              organization_id: auth.organizationId,
+              error: traduzido.original.slice(0, 500),
+            });
+          }
 
           await auditMcpToolCall({
             ctx,
@@ -127,12 +140,12 @@ export function createMcpServer(
             args: argsAudit,
             durationMs,
             success: false,
-            errorMessage: message,
+            errorMessage: traduzido.original,
           });
 
           return {
             isError: true,
-            content: [{ type: "text", text: message }],
+            content: [{ type: "text", text: traduzido.mensagem }],
           };
         }
       },
