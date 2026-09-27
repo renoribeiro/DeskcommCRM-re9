@@ -123,6 +123,12 @@ export const PUBLIC_PATHS: RegExp[] = [
   // como sair depois do corte de gateway.
   /^\/api\/v1\/conversations\/[^/]+\/media$/,
   /^\/_next\//,
+  // TÚNEL DO SENTRY (`tunnelRoute: "/monitoring"` no `next.config.ts`). Quem
+  // posta aqui é o SDK do navegador, inclusive na tela de login, antes de
+  // existir sessão — exigir cookie jogava fora justamente os erros de quem não
+  // consegue entrar. O túnel só repassa o envelope ao Sentry; não lê nem grava
+  // nada do CRM. Âncora `$`: nenhum sub-path nasce público de carona.
+  /^\/monitoring$/,
   /^\/favicon\.ico$/,
   // O ícone da aba (`app/icon.tsx`), que o `<head>` de TODA página pede —
   // inclusive o do `/login`, antes de existir sessão. Precisa de entrada

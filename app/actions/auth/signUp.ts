@@ -92,7 +92,11 @@ export async function signUp(
   }
 
   const hdrs = await headers();
-  const origin = hdrs.get("origin") ?? env.NEXT_PUBLIC_APP_URL;
+  // O link do e-mail aponta SEMPRE para a URL da instalação, nunca para o
+  // cabeçalho `Origin` da requisição: quem controla a requisição escolhia para
+  // onde o GoTrue mandaria o código (W9). O GoTrue ainda confere a allowlist de
+  // redirect, mas a origem certa não depende disso.
+  const origin = env.NEXT_PUBLIC_APP_URL.replace(/\/+$/, "");
   const requestId = hdrs.get("x-request-id");
   const ip = hdrs.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   const userAgent = hdrs.get("user-agent") ?? null;
