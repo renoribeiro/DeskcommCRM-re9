@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type * as ModuloEnv from "@/lib/env";
 
 import { audit } from "@/lib/audit";
 import { requireRole } from "@/lib/auth/require-role";
@@ -11,6 +12,18 @@ import { PERFIS_DO_PAIS } from "@/lib/legal/perfil-do-pais";
 import { createClient } from "@/lib/supabase/server";
 import { POST } from "./route";
 
+// A chave de CPF da instalação: presente por padrão (o caminho comum), e
+// apagada no caso que prova a recusa sem ela.
+const chaveCpf = vi.hoisted(() => ({ valor: "q5o1kB7sI0Qm0l3yVt2t8xJQv2cS8m9eZ0vKqRk3o8Y=" }));
+vi.mock("@/lib/env", async (importOriginal) => {
+  const real = await importOriginal<typeof ModuloEnv>();
+  return {
+    env: new Proxy(real.env, {
+      get: (alvo, prop) =>
+        prop === "CPF_ENCRYPTION_KEY" ? chaveCpf.valor : Reflect.get(alvo, prop),
+    }),
+  };
+});
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/auth/require-role", () => ({ requireRole: vi.fn() }));
 vi.mock("@/lib/impersonate/support", () => ({ requireSupportWrite: vi.fn() }));
@@ -255,9 +268,27 @@ describe("POST /api/v1/contacts/import — a planilha segue o PAÍS da organiza�
     // do país) é o hash — `hashCpf("123456789XI000")`, com o valor já em
     // maiúsculas e sem o que não é dígito nem letra.
     expect(db.tentativas[0]).toMatchObject({ cpf_hash: hashCpf("123456789XI000") });
+    // Hash e cifra sempre juntos (CHECK `contacts_cpf_consistency`).
+    expect(db.tentativas[0]!.cpf_encrypted).toMatch(/^\\x01[0-9a-f]+$/);
     expect(db.rpc).toHaveBeenCalledWith("emit_event", expect.objectContaining({
       p_payload: expect.objectContaining({ has_cpf: true }),
     }));
+  });
+
+  it("sem CPF_ENCRYPTION_KEY recusa com 503 antes de gravar qualquer linha", async () => {
+    const anterior = chaveCpf.valor;
+    chaveCpf.valor = "";
+    try {
+      const db = banco({ pais: "XI" });
+      const { status, corpo } = await importarCom("nome,telefone,bilhete", [
+        `Ana,${PHONE},123456789xi000`,
+      ]);
+      expect(status).toBe(503);
+      expect((corpo as { error?: { code: string } }).error?.code).toBe("cpf_encryption_unavailable");
+      expect(db.tentativas).toHaveLength(0);
+    } finally {
+      chaveCpf.valor = anterior;
+    }
   });
 
   it("diz na mensagem a régua do país — sem prometer dígito verificado que não existe", async () => {

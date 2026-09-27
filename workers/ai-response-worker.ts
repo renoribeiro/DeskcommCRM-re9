@@ -19,6 +19,7 @@ import type { ServiceBoundary } from "@/lib/atendimento/fronteira";
  */
 
 import { generateText, type LanguageModel } from "ai";
+import { sinalDaChamadaAoModelo } from "@/lib/ai/tempo-da-chamada";
 
 import { DEFAULT_BOT_MODEL, gatewayConfig, gatewayHeaders } from "@/lib/ai/gateway";
 import { embedText } from "@/lib/ai/embed";
@@ -1015,6 +1016,8 @@ async function invokeBot(ctx: BotContext, model: LanguageModel): Promise<BotResp
     system: renderedSystem,
     messages,
     headers,
+    // Teto de tempo (LLM_CALL_TIMEOUT_MS): provedor travado não prende a fila.
+    abortSignal: sinalDaChamadaAoModelo(),
   });
   const latency = Date.now() - start;
 

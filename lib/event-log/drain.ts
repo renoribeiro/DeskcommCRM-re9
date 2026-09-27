@@ -19,6 +19,13 @@ const MAX_ATTEMPTS = 5;
 /** Depois disto, um evento em `processing` é considerado órfão e volta à fila. */
 const PROCESSING_STALE_MS = 10 * 60 * 1000;
 
+/**
+ * Teto de órfãos devolvidos por tique. Sem teto, um backlog grande de presos
+ * (worker caído por horas) virava um SELECT sem limite e centenas de UPDATEs
+ * num tique só; o resto volta nos tiques seguintes.
+ */
+const STALE_RECOVERY_LIMIT = 100;
+
 export interface DrainSummary {
   /**
    * Os `skipped` COM motivo, para o resumo poder ser lido de fora do banco.
@@ -27,6 +34,12 @@ export interface DrainSummary {
    * `tests/unit/event-log-drain-loop.test.ts`) não precisa mudar.
    */
   pulados?: string[];
+  /**
+   * Desfechos descartados porque a posse do evento foi perdida (o handler
+   * passou da janela de órfão e outra instância o reclamou). Opcional pelo
+   * mesmo motivo de `pulados`.
+   */
+  perdidos?: number;
   scanned: number;
   done: number;
   retried: number;
@@ -166,7 +179,9 @@ export async function drainEventLog(
     .from("event_log")
     .select("id, organization_id, event_type, attempts")
     .eq("status", "processing")
-    .lt("updated_at", limiteDePresos);
+    .lt("updated_at", limiteDePresos)
+    .order("updated_at", { ascending: true })
+    .limit(STALE_RECOVERY_LIMIT);
 
   // ─── E A VOLTA CONTA COMO TENTATIVA ────────────────────────────────────────
   //
@@ -260,13 +275,45 @@ export async function drainEventLog(
     summary.scanned += 1;
 
     // Claim otimista — outra instância pode ter pego a mesma linha.
+    //
+    // O `attempts` LIDO é a posse (lease) deste claim. Ninguém o reescreve para
+    // o mesmo valor: o reaper de órfãos acima incrementa, e só quem tem a posse
+    // grava o desfecho. Então "status = processing E attempts = o que eu li" é
+    // verdade enquanto — e só enquanto — a posse for minha. Sem coluna nova.
     const { data: claimed } = await admin
       .from("event_log")
       .update({ status: "processing", updated_at: new Date().toISOString() })
       .eq("id", row.id)
       .eq("status", "pending")
+      .eq("attempts", row.attempts)
       .select("id");
     if (!claimed?.length) continue;
+
+    // ─── O DESFECHO SÓ É GRAVADO POR QUEM AINDA TEM A POSSE ──────────────────
+    //
+    // Um handler que passa da janela de órfão (10 min) tem o evento devolvido
+    // à fila pelo reaper, e OUTRA instância o reclama e processa. Quando o
+    // handler lento enfim volta, o update final antigo — `.eq("id")` sozinho —
+    // sobrescrevia o desfecho do segundo: `done` virava `pending`, ou `dead`
+    // abria aviso de um evento que já tinha dado certo, e `consumed_by`
+    // regredia. Com o guarda, a gravação tardia não casa com linha nenhuma e o
+    // desfecho de quem tem a posse fica.
+    const finalizar = async (patch: Record<string, unknown>): Promise<boolean> => {
+      const { data: tocado } = await admin
+        .from("event_log")
+        .update(patch)
+        .eq("id", row.id)
+        .eq("status", "processing")
+        .eq("attempts", row.attempts)
+        .select("id");
+      if (tocado?.length) return true;
+      summary.perdidos = (summary.perdidos ?? 0) + 1;
+      logger.warn("[event-log.drain] posse perdida: desfecho tardio descartado", {
+        event_id: row.id,
+        event_type: row.event_type,
+      });
+      return false;
+    };
 
     const results = await dispatchEvent(row);
 
@@ -285,9 +332,7 @@ export async function drainEventLog(
       // retry_at é opcional no HandlerResult — sem ele, aplica o mesmo backoff
       // do branch de erro pra não busy-loop reprocessando a cada tick.
       const retryAt = retry.retry_at ?? backoffAt(row.attempts + 1);
-      await admin
-        .from("event_log")
-        .update({
+      const gravou = await finalizar({
           status: "pending",
           consumed_by: consumedBy,
           next_attempt_at: retryAt,
@@ -299,24 +344,21 @@ export async function drainEventLog(
                   .join("; "),
               }
             : {}),
-        })
-        .eq("id", row.id);
-      summary.retried += 1;
+      });
+      if (gravou) summary.retried += 1;
     } else if (errors.length) {
       const attempts = row.attempts + 1;
       const dead = attempts >= MAX_ATTEMPTS;
       const motivo = errors.map((e) => `${e.consumer_key}: ${e.detail ?? "error"}`).join("; ");
-      await admin
-        .from("event_log")
-        .update({
-          status: dead ? "dead" : "pending",
-          attempts,
-          consumed_by: consumedBy,
-          last_error: motivo,
-          next_attempt_at: dead ? null : backoffAt(attempts),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", row.id);
+      const gravou = await finalizar({
+        status: dead ? "dead" : "pending",
+        attempts,
+        consumed_by: consumedBy,
+        last_error: motivo,
+        next_attempt_at: dead ? null : backoffAt(attempts),
+        updated_at: new Date().toISOString(),
+      });
+      if (!gravou) continue;
       if (dead) await avisarEventoMorto(admin, row, motivo);
       summary[dead ? "dead" : "failed"] += 1;
     } else {
@@ -341,18 +383,15 @@ export async function drainEventLog(
         summary.pulados?.push(
           ...pulados.map((r) => `${row.event_type}/${r.consumer_key}: ${r.detail}`),
         );
-      await admin
-        .from("event_log")
-        .update({
-          status: "done",
-          consumed_by: consumedBy,
-          updated_at: new Date().toISOString(),
-          ...(pulados.length
-            ? { last_error: pulados.map((r) => `${r.consumer_key}: ${r.detail}`).join("; ") }
-            : {}),
-        })
-        .eq("id", row.id);
-      summary.done += 1;
+      const gravou = await finalizar({
+        status: "done",
+        consumed_by: consumedBy,
+        updated_at: new Date().toISOString(),
+        ...(pulados.length
+          ? { last_error: pulados.map((r) => `${r.consumer_key}: ${r.detail}`).join("; ") }
+          : {}),
+      });
+      if (gravou) summary.done += 1;
     }
   }
   return summary;

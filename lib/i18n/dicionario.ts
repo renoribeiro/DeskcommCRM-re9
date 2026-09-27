@@ -8987,6 +8987,8 @@ export const DICIONARIO: Traducoes = {
   "Informe o novo horário.": { es: "Indica el nuevo horario." },
   "Já existe um fluxo com este nome.": { es: "Ya existe un flujo con este nombre." },
   "Já existe um contato com este telefone.": { es: "Ya existe un contacto con este teléfono." },
+  "O papel do token não pode ser maior que o seu.": { es: "El rol del token no puede ser superior al tuyo." },
+  "Esta instalação não tem a chave de criptografia de CPF configurada (CPF_ENCRYPTION_KEY). Salve o contato sem CPF ou peça a quem administra o servidor para configurá-la.": { es: "Esta instalación no tiene configurada la clave de cifrado de CPF (CPF_ENCRYPTION_KEY). Guarda el contacto sin CPF o pide a quien administra el servidor que la configure." },
   "Janela inválida.": { es: "Ventana inválida." },
   "Janela inválida: 'from' deve ser anterior a 'to'.": { es: "Ventana inválida: 'from' debe ser anterior a 'to'." },
   "Lead não encontrado.": { es: "Lead no encontrado." },

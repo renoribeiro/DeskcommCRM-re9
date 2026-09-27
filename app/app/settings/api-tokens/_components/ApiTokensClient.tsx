@@ -11,6 +11,7 @@ import {
   type CreatedApiToken,
 } from "@/hooks/team/useApiTokens";
 import { copyToClipboard } from "@/lib/clipboard";
+import type { EscopoDeToken } from "@/lib/schemas/team";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,7 +42,7 @@ import { useT } from "@/hooks/i18n/useT";
  * inalcançável — a API sempre aceitou os escopos; só o catálogo daqui os
  * escondia.
  */
-const SCOPES: { id: string; label: string }[] = [
+const SCOPES: { id: EscopoDeToken; label: string }[] = [
   { id: "mcp:read", label: "Agentes de IA podem LER o CRM (MCP)" },
   { id: "mcp:write", label: "Agentes de IA podem AGIR no CRM (MCP)" },
   // Sem isto o token nasce como 'agent' e as ferramentas de nível gerente
@@ -69,7 +70,7 @@ export function ApiTokensClient() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
-  const [scopes, setScopes] = useState<string[]>([]);
+  const [scopes, setScopes] = useState<EscopoDeToken[]>([]);
   const [expiresInDays, setExpiresInDays] = useState<string>("");
   const [created, setCreated] = useState<CreatedApiToken | null>(null);
 
@@ -97,7 +98,7 @@ export function ApiTokensClient() {
     }
   };
 
-  const toggleScope = (s: string) => {
+  const toggleScope = (s: EscopoDeToken) => {
     setScopes((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
   };
 

@@ -22,7 +22,12 @@ export const TOOLS_ATENDIMENTO = declararTools([
       "Encontra um cliente pelo nome, telefone ou e-mail, para o agente saber com quem está falando antes de responder.",
     oQueToca: "Cadastro de clientes",
     risco: "seguro",
-    pacotes: ["atender", "vender"],
+    // Fora de "atender" (auditoria A1): num atendimento o agente só enxerga o
+    // cliente da conversa (`lib/mcp/escopo-do-contato.ts`), e esse ele já
+    // conhece — a busca só poderia devolver ele mesmo. Ligada por padrão, ela
+    // ocupava uma vaga do teto sem dar nada ao turno. Segue em "vender", onde
+    // o dono a escolhe, recortada ao cliente da conversa.
+    pacotes: ["vender"],
   },
   {
     name: "crm_get_contact",

@@ -21,6 +21,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 
 import { PONTO_POR_ID } from '@/lib/ai/pontos/registro';
+import { LLM_CALL_TIMEOUT_MS_PADRAO, sinalDaChamadaAoModelo } from '@/lib/ai/tempo-da-chamada';
 import { scrubMessage } from '@/lib/sentry/scrub';
 
 import type { Logger } from '../../obs/logger';
@@ -657,6 +658,13 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
 
   const startedAt = Date.now();
   let result: Awaited<ReturnType<typeof generateText>>;
+  // Nunca sem teto: o sinal de quem chamou (quando há) é combinado com o
+  // `LLM_CALL_TIMEOUT_MS` da config. Um provedor que aceita a conexão e não
+  // responde prendia o turno e a fila inteira atrás dele.
+  const abortSignal = sinalDaChamadaAoModelo(
+    cfg.llmCallTimeoutMs ?? LLM_CALL_TIMEOUT_MS_PADRAO,
+    input.abortSignal,
+  );
   try {
     input.abortSignal?.throwIfAborted();
     // `system` aceita SystemModelMessage (com providerOptions de cache) — igual
@@ -671,7 +679,7 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
       model: factory(config.apiKey, model, decisao.baseUrl ?? config.baseUrl ?? undefined),
       system: prefix.system,
       messages: input.messages,
-      abortSignal: input.abortSignal,
+      abortSignal,
       tools: guardServiceTools(prefix.tools),
       stopWhen:
         input.maxSteps === undefined

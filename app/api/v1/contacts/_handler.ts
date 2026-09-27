@@ -18,7 +18,14 @@ import type { Idioma } from "@/lib/i18n/idiomas";
 import { roleAtLeast } from "@/lib/auth/types";
 import { canonicalPhoneBR, phoneLookupVariants } from "@/lib/channels/phone-variants";
 import { encontrarContatoPorTelefone } from "@/lib/channels/contato-por-telefone";
-import { hashCpf, encryptCpfSql } from "@/lib/contacts/cpf";
+import {
+  colunasDoCpf,
+  cpfCriptoDisponivel,
+  CpfIndisponivelError,
+  decryptCpf,
+  hashCpf,
+} from "@/lib/contacts/cpf";
+import { logger } from "@/lib/logger";
 import type { Contact } from "@/lib/types/contacts";
 import { ensureConversation, sessaoProntaParaEnvio } from "@/lib/automation/start-conversation";
 import type {
@@ -164,7 +171,9 @@ export async function listContactsHandler(
         if (d && d !== digits) orParts.push(`phone_number.ilike.%${d}%`);
       }
     }
-    if (digits.length === 11) {
+    // Busca por CPF só com a chave da instalação: sem ela não há como calcular
+    // o HMAC — e buscar pelo SHA-256 cru de antes não acharia nada gravado.
+    if (digits.length === 11 && cpfCriptoDisponivel()) {
       orParts.push(`cpf_hash.eq.${hashCpf(digits)}`);
     }
     query = query.or(orParts.join(","));
@@ -266,6 +275,34 @@ async function withConversas(
   };
 }
 
+/**
+ * As duas colunas do CPF, ou 503 quando a instalação não tem chave. Nunca grava
+ * só o hash: o CHECK `contacts_cpf_consistency` recusaria (500 opaco) e, se não
+ * recusasse, o CPF ficaria prometido e irrecuperável.
+ */
+export function colunasDoCpfOuRecusa(
+  cpf: string,
+  ctx: Pick<HandlerCtx, "requestId" | "idioma">,
+): { cpf_hash: string; cpf_encrypted: string } {
+  try {
+    return colunasDoCpf(cpf);
+  } catch (e) {
+    if (e instanceof CpfIndisponivelError) {
+      throw new ApiError(
+        503,
+        "cpf_encryption_unavailable",
+        undefined,
+        ctx.requestId,
+        traduzir(
+          "Esta instalação não tem a chave de criptografia de CPF configurada (CPF_ENCRYPTION_KEY). Salve o contato sem CPF ou peça a quem administra o servidor para configurá-la.",
+          ctx.idioma ?? "pt-BR",
+        ),
+      );
+    }
+    throw e;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // get
 // ---------------------------------------------------------------------------
@@ -323,13 +360,27 @@ export async function getContactHandler(
     if (!roleAtLeast(role, "manager")) {
       cpfDecryptDenied = true;
     } else {
-      const { data: dec, error: decErr } = await supabase.rpc("decrypt_cpf", {
-        p_contact_id: input.contactId,
-      });
-      if (decErr) {
-        console.warn("[contacts.get] decrypt_cpf RPC unavailable", decErr.message);
-      } else if (typeof dec === "string") {
-        cpfDecrypted = dec;
+      // A cifra é lida à parte, e só aqui: `cpf_encrypted` não entra em
+      // SELECT_COLS para nunca sair em listagem nem em resposta sem propósito.
+      const { data: cifra, error: cifraErr } = await supabase
+        .from("contacts")
+        .select("cpf_encrypted")
+        .eq("id", input.contactId)
+        .eq("organization_id", ctx.organization_id)
+        .maybeSingle();
+      const blob = (cifra as { cpf_encrypted?: unknown } | null)?.cpf_encrypted;
+      if (cifraErr) {
+        logger.warn("contacts.get.cpf_read_failed", { request_id: ctx.requestId });
+      } else if (blob) {
+        try {
+          cpfDecrypted = decryptCpf(blob);
+        } catch (e) {
+          // Sem o CPF nem a cifra no log: só a classe do erro.
+          logger.warn("contacts.get.cpf_decrypt_failed", {
+            request_id: ctx.requestId,
+            motivo: e instanceof CpfIndisponivelError ? "chave_ausente" : "cifra_invalida",
+          });
+        }
       }
       const a = actorAuditPayload(ctx.actor);
       await audit({
@@ -395,9 +446,7 @@ export async function createContactHandler(
   };
 
   if (input.cpf) {
-    insertRow.cpf_hash = hashCpf(input.cpf);
-    const enc = await encryptCpfSql(supabase, input.cpf);
-    if (enc) insertRow.cpf_encrypted = enc;
+    Object.assign(insertRow, colunasDoCpfOuRecusa(input.cpf, ctx));
   }
 
   const { data: created, error: insErr } = await supabase
@@ -566,9 +615,7 @@ export async function patchContactHandler(
     patch.consent = { ...anterior, ...input.consent };
   }
   if (input.cpf !== undefined) {
-    patch.cpf_hash = hashCpf(input.cpf);
-    const enc = await encryptCpfSql(supabase, input.cpf);
-    if (enc) patch.cpf_encrypted = enc;
+    Object.assign(patch, colunasDoCpfOuRecusa(input.cpf, ctx));
   }
 
   if (Object.keys(patch).length === 0) {

@@ -19,6 +19,7 @@ import type { Actor } from "@/lib/api/handlers/types";
 import { registrarFalhaDeToken, tokenFailureLimited } from "@/lib/auth/rate-limit";
 import type { Role } from "@/lib/auth/types";
 import { ROLE_RANK } from "@/lib/auth/types";
+import { logger } from "@/lib/logger";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export interface McpAuthResult {
@@ -87,7 +88,13 @@ export function extractBearer(authHeader: string | null): string | null {
 /** Por que um `dsk_...` não validou — neutro, sem código MCP nem HTTP status. */
 export class ApiTokenError extends Error {
   constructor(
-    public readonly reason: "malformed" | "not_found" | "revoked" | "expired" | "lookup_failed",
+    public readonly reason:
+      | "malformed"
+      | "not_found"
+      | "revoked"
+      | "expired"
+      | "creator_inactive"
+      | "lookup_failed",
     message: string,
   ) {
     super(message);
@@ -147,18 +154,65 @@ export async function resolveApiToken(plaintext: string): Promise<ResolvedApiTok
     throw new ApiTokenError("expired", "Token expired.");
   }
 
+  const scopes = parseScopes(data.scopes);
+
+  // ─── O TOKEN VALE ENQUANTO QUEM O CRIOU VALE ──────────────────────────────
+  //
+  // O token herdava a autoridade de quem o criou e SOBREVIVIA a essa pessoa:
+  // um admin removido da organização (ou rebaixado a atendente) seguia
+  // operando o CRM como `role:manager` pelo token que emitiu antes de sair.
+  // Agora a resolução confere, a cada uso, que `created_by` ainda é membro
+  // ATIVO desta organização (`user_organizations.revoked_at is null`) e que o
+  // papel dele alcança o `role:` do token.
+  //
+  // Token de AGENTE (`actor:ai_agent`, o efêmero do turno) confere só a
+  // filiação: `role:ai_operator` é papel de máquina, que nenhuma pessoa tem, e
+  // o mint (`lib/ai/runtime/mcp_token.ts`) já escolhe um membro ativo.
+  const { data: membro, error: membroErr } = await supabase
+    .from("user_organizations")
+    .select("role")
+    .eq("user_id", data.created_by)
+    .eq("organization_id", data.organization_id)
+    .is("revoked_at", null)
+    .maybeSingle();
+  if (membroErr) {
+    throw new ApiTokenError("lookup_failed", `Token lookup failed: ${membroErr.message}`);
+  }
+  const papelDoCriador = (membro as { role?: string } | null)?.role as Role | undefined;
+  // A dispensa do agente vale só até `ai_operator`: um token legado com
+  // `actor:ai_agent` e `role:admin` (os escopos eram texto livre até a A4) não
+  // escapa da comparação por se dizer agente.
+  const papelDoToken = scopesRole(scopes);
+  const dispensaDeAgente =
+    scopes.includes("actor:ai_agent") && ROLE_RANK[papelDoToken] <= ROLE_RANK.ai_operator;
+  const papelAlcanca =
+    papelDoCriador !== undefined &&
+    VALID_ROLES.has(papelDoCriador) &&
+    (dispensaDeAgente || ROLE_RANK[papelDoCriador] >= ROLE_RANK[papelDoToken]);
+  if (!papelAlcanca) {
+    throw new ApiTokenError(
+      "creator_inactive",
+      "Token no longer valid: the member who created it left the organization or no longer has the role it grants. Ask an admin to issue a new token.",
+    );
+  }
+
   supabase
     .from("api_tokens")
     .update({ last_used_at: new Date().toISOString() })
     .eq("id", data.id)
     .then(({ error: updErr }) => {
-      if (updErr) console.error("[mcp.auth] last_used_at update failed", updErr.message);
+      if (updErr) {
+        logger.warn("mcp.auth.last_used_at_update_failed", {
+          api_token_id: data.id,
+          error: updErr.message,
+        });
+      }
     });
 
   return {
     id: data.id,
     organizationId: data.organization_id,
-    scopes: parseScopes(data.scopes),
+    scopes,
     createdBy: data.created_by,
   };
 }

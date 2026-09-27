@@ -82,15 +82,27 @@ interface Registro {
 }
 
 type Resposta = { data: LinhaDoToken | null; error: { message: string } | null };
+type MembroDoCriador = { role: string } | null;
 
 /**
  * Dublê do admin client. `select(...).eq(...).maybeSingle()` devolve a resposta
  * pedida; `update(...).eq(...)` é thenable, como o builder real — é assim que o
  * `last_used_at` sem `await` se resolve.
  */
-function adminDeTokens(resposta: Resposta, reg: Registro) {
+function adminDeTokens(resposta: Resposta, reg: Registro, membro: MembroDoCriador = { role: "admin" }) {
   return {
     from: (tabela: string) => {
+      // A filiação de quem criou o token (A4): membro ATIVO por padrão, para os
+      // casos deste arquivo medirem só o que medem. Os casos da filiação estão
+      // em `auth-token-vale-enquanto-o-criador-vale.test.ts`.
+      if (tabela === "user_organizations") {
+        const c: Record<string, unknown> = {};
+        c.select = () => c;
+        c.eq = () => c;
+        c.is = () => c;
+        c.maybeSingle = async () => ({ data: membro, error: null });
+        return c;
+      }
       if (tabela !== "api_tokens") throw new Error(`tabela inesperada: ${tabela}`);
       return {
         select: (colunas: string) => {
