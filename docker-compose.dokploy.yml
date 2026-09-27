@@ -459,7 +459,9 @@ services:
   # ════════════════════════════════ CRM ═════════════════════════════════════
   # Roda a cada deploy e sai: schema (baseline.sql) e primeiro administrador.
   setup:
-    image: postgres:17.6-alpine
+    # Tag com a versão do Alpine: `17.6-alpine` sozinha é republicada quando o
+    # Alpine sobe, e o mesmo deploy passaria a rodar outra imagem.
+    image: postgres:17.6-alpine3.22
     restart: "no"
     mem_limit: 256m
     # O baseline cria buckets e policies em `storage.`: o schema tem de existir
@@ -476,8 +478,13 @@ services:
     entrypoint: ["/bin/sh", "/primeira-instalacao.sh"]
     volumes:
       - ./infra/dokploy/primeira-instalacao.sh:/primeira-instalacao.sh:ro
+      # Só é lido com BASELINE_FONTE=clone (desenvolvimento/teste). O padrão é
+      # baixar o baseline da tag v${IMAGE_TAG}, o MESMO schema das imagens do
+      # app — o clone é a ponta da branch, que pode estar em outra versão.
       - ./supabase/baseline.sql:/baseline.sql:ro
     environment:
+      IMAGE_TAG: ${IMAGE_TAG:?defina IMAGE_TAG com uma versão publicada, ex. 1.57.0 (docs/imobiliario/03-instalacao-vps-dokploy.md)}
+      BASELINE_FONTE: ${BASELINE_FONTE:-versao}
       DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
       AUTH_URL: http://imobcrm-auth:9999
       SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
@@ -601,7 +608,9 @@ services:
     logging: *default-logging
 
   redis:
-    image: redis:7-alpine
+    # Versão completa (patch + Alpine): `7-alpine` flutua dentro do major, e
+    # dependência upstream vai com tag fixa (docs/doctrine/packaging.md).
+    image: redis:7.4.11-alpine3.21
     restart: unless-stopped
     mem_limit: 192m
     networks:
