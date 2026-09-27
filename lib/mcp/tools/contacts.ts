@@ -22,6 +22,7 @@ const searchInputShape = {
   query: z.string().min(1).max(200).describe("Termo de busca (nome, email ou telefone)."),
   limit: z.number().int().min(1).max(50).default(10),
   cursor: z.string().optional(),
+  contact_id: z.string().uuid().optional().describe("Restringe a busca a este contato."),
 };
 
 export const crmSearchContacts: McpToolDefinition<typeof searchInputShape> = {
@@ -45,6 +46,7 @@ export const crmSearchContacts: McpToolDefinition<typeof searchInputShape> = {
         limit: input.limit,
         cursor: input.cursor,
       },
+      input.contact_id ? { contactId: input.contact_id } : undefined,
     );
     return {
       contacts: result.contacts.map((c) => ({

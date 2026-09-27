@@ -243,6 +243,12 @@ export interface ListLeadsQuery {
   stage_id?: string;
   status?: "open" | "won" | "lost";
   owner_user_id?: string;
+  /**
+   * Negócios de UM contato. É o filtro que o turno do agente usa: o contato da
+   * conversa entra aqui (`lib/mcp/escopo-do-contato.ts`) e o servidor filtra,
+   * em vez de a resposta de uma página da base inteira ser recortada depois.
+   */
+  contact_id?: string;
   /** `lost_reason` exato (issue #1537) — o filtro de perda por motivo. */
   lost_reason?: string;
   /** Categoria do motivo de perda (issue #1537), resolvida no funil. */
@@ -300,6 +306,7 @@ export async function listLeadsHandler(
   if (q.stage_id) query = query.eq("stage_id", q.stage_id);
   if (q.status) query = query.eq("status", q.status);
   if (q.owner_user_id) query = query.eq("owner_user_id", q.owner_user_id);
+  if (q.contact_id) query = query.eq("contact_id", q.contact_id);
   // #1537 — perda por motivo e por categoria. A categoria NÃO é coluna: ela
   // sai do `settings.lost_reasons` do funil, então o caminho é achar os rótulos
   // da categoria e filtrar por eles. Só os PERDIDOS têm motivo que valha; um

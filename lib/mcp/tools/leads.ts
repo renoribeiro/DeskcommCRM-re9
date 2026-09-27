@@ -87,6 +87,7 @@ const listInputShape = {
   stage_id: z.string().uuid().optional(),
   status: z.enum(["open", "won", "lost"]).optional(),
   owner_user_id: z.string().uuid().optional(),
+  contact_id: z.string().uuid().optional().describe("Só os negócios deste contato."),
   /** `lost_reason` exato do negócio perdido (issue #1537). */
   lost_reason: z.string().min(1).max(500).optional(),
   /**
@@ -121,6 +122,7 @@ export const crmListLeads: McpToolDefinition<typeof listInputShape> = {
         stage_id: input.stage_id,
         status: input.status,
         owner_user_id: input.owner_user_id,
+        contact_id: input.contact_id,
         lost_reason: input.lost_reason,
         lost_reason_category: input.lost_reason_category,
         limit: input.limit,

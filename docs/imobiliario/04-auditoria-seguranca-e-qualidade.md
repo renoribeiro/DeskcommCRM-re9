@@ -90,7 +90,7 @@ Severidade: 🔴 crítico · 🟠 alto · 🟡 médio · 🔵 baixo · ⚪ infor
 
 | ID | Sev. | Achado | Ajuste |
 |---|---|---|---|
-| A1 | 🟠 | **Um cliente no WhatsApp pode pedir ao agente dados de outros clientes:** busca e leitura de contato, lead e compromisso não se restringem ao contato da conversa | Com ator `ai_agent` e contato no turno, as ferramentas de contato, lead e agenda só enxergam e alteram **esse** contato. O resto é recusado com mensagem para o modelo |
+| A1 | 🟠 | **Um cliente no WhatsApp pode pedir ao agente dados de outros clientes:** busca e leitura de contato, lead e compromisso não se restringem ao contato da conversa | Com ator `ai_agent` e contato no turno, as ferramentas de contato, lead e agenda só enxergam e alteram **esse** contato. O resto é recusado com mensagem para o modelo. Listagens (contatos, negócios, casos) recebem o contato como filtro no servidor, sem paginação; gravar memória da empresa fica fora do atendimento |
 | A2 | 🟡 | O webhook do WAHA aceita evento **sem assinatura** mesmo quando a sessão tem segredo | Com segredo de 16+ caracteres, a assinatura é obrigatória |
 | A3 | 🟠 | **Cadastrar contato com CPF falha:** a função `encrypt_cpf` nunca existiu, e o CHECK `contacts_cpf_consistency` recusa `cpf_hash` sem `cpf_encrypted`. Além disso, o hash é SHA-256 sem chave (reversível em minutos) | Cifragem AES-256-GCM no servidor com `CPF_ENCRYPTION_KEY` e hash **HMAC-SHA256** com chave derivada. A leitura (decifrar) usa a mesma biblioteca |
 | A4 | 🟡 | Token de API continua valendo depois que quem o criou sai da organização; os escopos são texto livre (dá para forjar `actor:ai_agent`) | Escopos validados por lista fechada. A resolução confere que o criador ainda é membro com papel suficiente |

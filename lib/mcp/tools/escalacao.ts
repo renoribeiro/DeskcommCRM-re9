@@ -130,6 +130,7 @@ export const crmListAvailableAttendants: McpToolDefinition<typeof atendentesInpu
 const listaChamadosInputShape = {
   state: z.enum(["abertos", "fechados"]).default("abertos"),
   limit: z.number().int().min(1).max(50).default(20),
+  contact_id: z.string().uuid().optional().describe("Só os casos das conversas deste contato."),
 };
 
 export const crmListHumanCases: McpToolDefinition<typeof listaChamadosInputShape> = {
@@ -137,22 +138,36 @@ export const crmListHumanCases: McpToolDefinition<typeof listaChamadosInputShape
   description:
     "Casos humanos da org por estado. 'abertos' = awaiting_human|awaiting_lead; 'fechados' = " +
     "resolved|escalated|cancelled. Devolve title, blocker, status, conversation_id e o nome do " +
-    "contato. open_count é sempre o total de abertos, independente do filtro.",
+    "contato. open_count é o total de abertos, independente do filtro de estado (com contact_id, " +
+    "o total de abertos desse contato).",
   inputSchema: listaChamadosInputShape,
   category: "read",
   requiresRole: "agent",
   requiresScope: "mcp:read",
   handler: async (input, ctx) => {
+    // Com `contact_id` (o turno do agente sempre o traz, injetado pelo escopo
+    // do contato), o recorte é o das conversas DESSE contato — e o
+    // `open_count` sai do mesmo recorte.
+    let visiveisPara: string[] | "todas" = "todas";
+    if (input.contact_id) {
+      const { data, error } = await ctx.supabase
+        .from("conversations")
+        .select("id")
+        .eq("organization_id", ctx.organizationId)
+        .eq("contact_id", input.contact_id);
+      if (error) throw new Error(`listar_casos_falhou: ${error.message}`);
+      visiveisPara = ((data ?? []) as Array<{ id: string }>).map((c) => c.id);
+    }
     const { chamados, abertos } = await listarChamados(ctx.supabase, ctx.organizationId, {
       estado: input.state,
       limite: input.limit,
-      // `"todas"`, e não o recorte por atendente que a TELA aplica: `ctx.supabase`
+      // Sem `contact_id`: `"todas"`, e não o recorte por atendente que a TELA aplica: `ctx.supabase`
       // é admin por contrato (o agente não é um usuário com sessão, e a org vem
       // do `ctx`, nunca do input). Recortar aqui faria o agente de IA enxergar
       // MENOS casos do que enxerga hoje — ele abriu esses casos e é quem
       // acompanha a fila inteira. A divergência com a tela é deliberada e está
       // declarada no tipo (`ConversasVisiveis`), não escondida num default.
-      visiveisPara: "todas",
+      visiveisPara,
     });
     return { cases: chamados, open_count: abertos };
   },
