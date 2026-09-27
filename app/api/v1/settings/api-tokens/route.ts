@@ -121,6 +121,12 @@ export async function POST(req: NextRequest): Promise<Response> {
     if (insErr.code === "PT409") {
       return fail("api_token_teto_atingido", insErr.message, 409, { requestId });
     }
+    // PT403: o gatilho `trg_valida_token_de_pessoa` (migration 5001) repete no
+    // banco a lista fechada, o nome reservado e o teto de papel. O Zod acima já
+    // recusa antes; chegar aqui é divergência entre as duas listas, não 500.
+    if (insErr.code === "PT403") {
+      return fail("forbidden", insErr.message, 403, { requestId });
+    }
     return fail("internal_error", insErr.message, 500, { requestId });
   }
 
