@@ -194,6 +194,12 @@ const schema = z.object({
   // when AI_GATEWAY_API_KEY is absent, so production boot must not be fatal.
   AI_GATEWAY_API_KEY: z.string().optional().default(""),
   AI_GATEWAY_BASE_URL: z.string().optional().default(""),
+  /**
+   * Teto de tempo de UMA chamada ao modelo, em ms (padrão 90 s). Sem teto, um
+   * provedor travado prendia o turno e a fila atrás dele. Valor inválido vale o
+   * padrão — nunca derruba o boot. Quem aplica: `lib/ai/tempo-da-chamada.ts`.
+   */
+  LLM_CALL_TIMEOUT_MS: z.coerce.number().int().positive().default(90_000).catch(90_000),
   // OpenRouter: alternativa ao gateway da Vercel, compatível com a API da
   // OpenAI. Opcional — sem ela nada muda; com ela o chat passa a ser roteado
   // por lá. Ver resolveLanguageModel() em lib/ai/gateway.ts.

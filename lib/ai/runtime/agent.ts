@@ -26,6 +26,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, stepCountIs, type LanguageModel, type StopCondition, type ToolSet } from "ai";
+import { sinalDaChamadaAoModelo } from "@/lib/ai/tempo-da-chamada";
 
 // Fonte única do endpoint — a mesma constante que o registry de produção usa.
 // Repetir a URL aqui criaria dois lugares para consertar quando ela mudar.
@@ -567,6 +568,8 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       messages,
       tools,
       stopWhen: [stepCountIs(version.max_steps), budgetGuard],
+      // Teto de tempo (LLM_CALL_TIMEOUT_MS): provedor travado não prende o turno.
+      abortSignal: sinalDaChamadaAoModelo(),
     });
 
     // 12) Aggregate metrics.

@@ -142,6 +142,9 @@ const envSchema = z.object({
   FOLLOWUP_MAX_AHEAD_MS: z.coerce.number().int().positive().default(RETORNO_MAX_AHEAD_MS_PADRAO),
   // TTL do prefixo estável de prompt cache (doutrina: 1h).
   LLM_CACHE_TTL: z.enum(['5m', '1h']).default('1h'),
+  // Teto de tempo de UMA chamada ao modelo (ms). Inválido vale o padrão — o
+  // knob não derruba o worker. Ver lib/ai/tempo-da-chamada.ts.
+  LLM_CALL_TIMEOUT_MS: z.coerce.number().int().positive().default(90_000).catch(90_000),
   // Raciocínio (thinking) da DeepSeek. O provedor LIGA por default, e o token
   // de raciocínio entra na conta como SAÍDA — medido em produção: o turno do
   // agente gastou ~8× a saída do OpenAI e +22 s de latência, o que anulou o
