@@ -7985,6 +7985,18 @@ export const DICIONARIO: Traducoes = {
   "Em GoTrue próprio, a chave equivalente é:": {
     es: "En un GoTrue propio, la clave equivalente es:",
   },
+  "Nesta instalação pelo Dokploy, o cadastro direto só acompanha a troca depois de um novo Deploy: o CRM já segue o modo novo, mas o login continua com o modo anterior. Esta tela só avisa — nada é corrigido aqui.": {
+    es: "En esta instalación con Dokploy, el registro directo solo sigue el cambio después de un nuevo Deploy: el CRM ya sigue el modo nuevo, pero el inicio de sesión mantiene el modo anterior. Esta pantalla solo avisa — aquí no se corrige nada.",
+  },
+  "No Dokploy, abra o serviço do CRM, ajuste esta chave na aba Environment e clique em Deploy:": {
+    es: "En Dokploy, abre el servicio del CRM, ajusta esta clave en la pestaña Environment y haz clic en Deploy:",
+  },
+  "O e-mail do login é configurado no Dokploy.": {
+    es: "El correo del inicio de sesión se configura en Dokploy.",
+  },
+  "O servidor salvo aqui envia os e-mails do CRM (convites, avisos, LGPD). Os e-mails de \"esqueci a senha\" e de confirmação de cadastro saem pelas variáveis SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD e SMTP_FROM_EMAIL da aba Environment do serviço no Dokploy. Preencha lá os mesmos dados e clique em Deploy.": {
+    es: "El servidor guardado aquí envía los correos del CRM (invitaciones, avisos, LGPD). Los correos de \"olvidé mi contraseña\" y de confirmación de registro salen por las variables SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD y SMTP_FROM_EMAIL de la pestaña Environment del servicio en Dokploy. Completa allí los mismos datos y haz clic en Deploy.",
+  },
   "Não deu para salvar. Tente de novo em instantes.": {
     es: "No se pudo guardar. Inténtalo de nuevo en unos instantes.",
   },

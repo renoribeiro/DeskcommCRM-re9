@@ -55,6 +55,9 @@ export default async function Page() {
   // separado, mandar rodar o update.sh seria instrução errada e aviso eterno:
   // ali quem muda é o operador, no painel ou no env do GoTrue próprio.
   const kitSincroniza = process.env.SINGLE_SERVER === "1";
+  // Instalação pelo Dokploy (docker-compose.dokploy.yml): o GoTrue lê o
+  // DISABLE_SIGNUP do Environment do serviço, e só um novo Deploy o aplica.
+  const viaDokploy = process.env.DEPLOY_MODE === "dokploy";
   const alvoDoGoTrue = modo === "so_convite" ? "true" : "false";
 
   return (
@@ -75,7 +78,25 @@ export default async function Page() {
           <p className="font-medium">
             {traduzir("A troca de modo ainda não chegou ao servidor.", usuario.idioma)}
           </p>
-          {kitSincroniza ? (
+          {viaDokploy ? (
+            <>
+              <p className="mt-1">
+                {traduzir(
+                  "Nesta instalação pelo Dokploy, o cadastro direto só acompanha a troca depois de um novo Deploy: o CRM já segue o modo novo, mas o login continua com o modo anterior. Esta tela só avisa — nada é corrigido aqui.",
+                  usuario.idioma,
+                )}
+              </p>
+              <p className="mt-2">
+                {traduzir(
+                  "No Dokploy, abra o serviço do CRM, ajuste esta chave na aba Environment e clique em Deploy:",
+                  usuario.idioma,
+                )}
+              </p>
+              <code className="mt-1 block overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs">
+                DISABLE_SIGNUP={alvoDoGoTrue}
+              </code>
+            </>
+          ) : kitSincroniza ? (
             <>
               <p className="mt-1">
                 {traduzir(

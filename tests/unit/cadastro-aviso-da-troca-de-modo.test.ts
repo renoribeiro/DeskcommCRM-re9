@@ -221,6 +221,23 @@ describe("com Supabase separado, o update.sh não leva o modo ao GoTrue", () => 
   });
 });
 
+describe("instalação pelo Dokploy: quem leva o modo ao GoTrue é o Environment + Deploy", () => {
+  it("'só convite' com o GoTrue aberto → ensina a chave no Environment do Dokploy, sem update.sh nem painel da nuvem", async () => {
+    vi.stubEnv("SINGLE_SERVER", "0");
+    vi.stubEnv("DEPLOY_MODE", "dokploy");
+    cena.modo = "so_convite";
+    cena.settings = { disable_signup: false };
+
+    await abrirTela();
+
+    expect(screen.getByText(TITULO)).toBeInTheDocument();
+    expect(screen.getByText(/aba Environment e clique em Deploy/)).toBeInTheDocument();
+    expect(screen.getByText("DISABLE_SIGNUP=true")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/update\.sh/);
+    expect(document.body.textContent).not.toMatch(/Authentication → Sign In/);
+  });
+});
+
 describe("a régua do aviso é a mesma do kit (#1665)", () => {
   it("só o modo 'so convite' espera disable_signup=true", () => {
     expect(disableSignupEsperado("so_convite")).toBe(true);

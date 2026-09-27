@@ -123,6 +123,24 @@ describe("/admin/email — o que a página entrega ao navegador", () => {
     expect((await propsDaPagina()).transporte).toBe("resend");
   });
 
+  it("instalação pelo Dokploy: avisa que o e-mail do login vem do Environment, e a senha segue sem atravessar", async () => {
+    const anterior = process.env.DEPLOY_MODE;
+    process.env.DEPLOY_MODE = "dokploy";
+    try {
+      const elemento = (await Page()) as unknown as {
+        props: { children: Array<{ type: unknown; props: Record<string, unknown> }> };
+      };
+      const [aviso, formulario] = elemento.props.children;
+      if (!aviso || !formulario) throw new Error("a página não devolveu aviso + formulário");
+      expect(formulario.type).toBe(FormularioDeSmtp);
+      expect(JSON.stringify(formulario.props)).not.toContain(SENHA_EM_CLARO);
+      expect(JSON.stringify(aviso.props)).toContain("aba Environment do serviço no Dokploy");
+    } finally {
+      if (anterior === undefined) delete process.env.DEPLOY_MODE;
+      else process.env.DEPLOY_MODE = anterior;
+    }
+  });
+
   it("quem não é dono da instalação não vê a tela", async () => {
     usuario = { is_platform_admin: false, idioma: "pt-BR" };
 

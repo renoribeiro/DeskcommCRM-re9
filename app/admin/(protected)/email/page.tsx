@@ -5,6 +5,7 @@ import { getSmtpConfig } from "@/lib/email/config";
 import { transporteEmVigor } from "@/lib/email/roteador";
 import { CATALOGO_DA_INSTALACAO } from "@/lib/instalacao/catalogo";
 import { estadoParaTela } from "@/lib/instalacao/config";
+import { traduzir } from "@/lib/i18n/dicionario";
 import { normalizarIdioma } from "@/lib/i18n/idiomas";
 
 import { FormularioDeSmtp } from "./_form";
@@ -69,7 +70,13 @@ export default async function Page() {
     })),
   );
 
-  return (
+  // Instalação pelo Dokploy: o SMTP salvo aqui vale para os e-mails do CRM, mas
+  // o login (GoTrue) lê as SMTP_* do Environment do serviço — o kit copia de um
+  // para o outro no update.sh; no Dokploy, quem copia é a pessoa, e esta tela diz.
+  const viaDokploy = process.env.DEPLOY_MODE === "dokploy";
+  const idioma = normalizarIdioma(usuario.locale);
+
+  const formulario = (
     <FormularioDeSmtp
       host={config.host}
       porta={config.port}
@@ -90,7 +97,28 @@ export default async function Page() {
       // O mesmo idioma que a tela de Credenciais usa nos campos iguais a estes:
       // eles são o MESMO componente, e traduzir por caminhos diferentes seria
       // como as duas telas voltariam a divergir.
-      idioma={normalizarIdioma(usuario.locale)}
+      idioma={idioma}
     />
+  );
+  if (!viaDokploy) return formulario;
+
+  return (
+    <div className="space-y-6">
+      <div
+        role="status"
+        className="rounded-md border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm dark:border-amber-500/30 dark:bg-amber-950/20"
+      >
+        <p className="font-medium">
+          {traduzir("O e-mail do login é configurado no Dokploy.", idioma)}
+        </p>
+        <p className="mt-1">
+          {traduzir(
+            "O servidor salvo aqui envia os e-mails do CRM (convites, avisos, LGPD). Os e-mails de \"esqueci a senha\" e de confirmação de cadastro saem pelas variáveis SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD e SMTP_FROM_EMAIL da aba Environment do serviço no Dokploy. Preencha lá os mesmos dados e clique em Deploy.",
+            idioma,
+          )}
+        </p>
+      </div>
+      {formulario}
+    </div>
   );
 }

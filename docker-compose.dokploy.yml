@@ -64,6 +64,9 @@ x-logging: &default-logging
 # contra lib/env.ts: variável nova lá sem linha aqui reprova.
 x-crm-env: &crm-env
   NODE_ENV: production
+  # Diz às telas de /admin que o login (GoTrue) desta instalação lê SMTP e
+  # cadastro do Environment do Dokploy — não do update.sh nem do painel da nuvem.
+  DEPLOY_MODE: dokploy
   # ── Endereços (apelidos únicos da rede privada; ver o cabeçalho) ──
   NEXT_PUBLIC_APP_URL: https://${DOMAIN:?defina DOMAIN}
   NEXT_PUBLIC_ADMIN_URL: https://${DOMAIN}
