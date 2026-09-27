@@ -1,7 +1,7 @@
 ---
 type: plan
 project: ImobCRM (fork re9 do DeskcommCRM — vertical imobiliário de VENDA)
-status: aprovado em direção — decisões do dono registradas na §0 (27/09/2026)
+status: aprovado em direção — decisões do dono registradas na §0 (27/09/2026, duas rodadas)
 last_updated: 2026-09-27
 base: auditoria em 01-auditoria.md (HEAD 38dd469)
 ---
@@ -21,7 +21,7 @@ base: auditoria em 01-auditoria.md (HEAD 38dd469)
 
 | # | Decisão | Consequência no plano |
 |---|---|---|
-| 1 | **Só venda** (sem locação) | Sai do escopo: locação, administração, cobrança de aluguel, repasse, reajuste, garantias locatícias e Lei do Inquilinato. Os funis são **Venda** e **Captação**. **Lançamentos** ficam como fase opcional (§8), porque também são venda |
+| 1 | **Só venda** (sem locação) | Sai do escopo: locação, administração, cobrança de aluguel, repasse, reajuste, garantias locatícias e Lei do Inquilinato. Os funis são **Venda**, **Lançamento** e **Captação** (lançamentos entraram na fase 1 pela decisão 11) |
 | 2 | **Acompanhar o upstream** | Fork vivo: merge periódico de `melgarafael/DeskcommCRM` e código imobiliário isolado (§2) |
 | 3 | **SaaS** | A RE9 opera **uma plataforma multi-imobiliária**. Entram cadastro público com teste grátis, planos e limites, cobrança da assinatura, domínio próprio da vitrine, operação 24/7 (backup, monitoramento, escala) e contrato de operador LGPD. O kit self-host deixa de ser prioridade |
 | 4 | **Nome: ImobCRM** | Vem do banco (`platform_branding`), sem nome no código (`tests/unit/branding.test.ts`) |
@@ -29,6 +29,11 @@ base: auditoria em 01-auditoria.md (HEAD 38dd469)
 | 6 | **Portais: Grupo OLX e Imovelweb** | Entrada de leads e saída de feed XML só desses dois na primeira onda |
 | 7 | **Soluções open source ou sem custo** | Stack da §2.4: DocuSeal (assinatura), MapLibre + OpenFreeMap (mapa), BrasilAPI/ViaCEP/Nominatim (CEP e geocodificação), BCB SGS (índices e taxas), `@react-pdf/renderer` (PDF, já no projeto), Web Push (já no projeto), MinIO (armazenamento, se sair do Supabase) |
 | 8 | **Piloto: RE9 Imob** | A imobiliária do próprio dono é a primeira organização. As conversas reais dela formam o corpus de avaliação do agente |
+| 9 (A) | **Cada imobiliária usa a própria chave de IA** | Usa o que já existe (`ai_provider_credentials`, chave do cliente por organização). Os planos **não** incluem créditos de IA. O onboarding ganha um passo guiado "Conectar sua IA", com tutorial em linguagem leiga, teste da chave na hora e estimativa de custo mensal. O controle de gasto (`ai_budgets`) vem **ligado** por padrão, com teto sugerido |
+| 10 (B) | **WhatsApp: API oficial da Meta como padrão, com WAHA e Evolution API v2 prontos** | A Meta Cloud e o WAHA já existem (`lib/channels/adapters/meta-cloud.ts`, `waha.ts`). Entra um **adaptador novo para a Evolution API v2** (épico E20), no mesmo contrato dos demais. A tela de conexão oferece os três, com a oficial recomendada |
+| 11 (C) | **Lançamentos entram na primeira fase** | O épico E12 (empreendimento, torres, unidades, espelho de vendas, tabela de preços, reserva) sobe para a fase 1, junto com o cadastro de imóveis, porque unidade **é** imóvel e as duas coisas compartilham o modelo. Os funis passam a ser três: Venda, Lançamento e Captação |
+| 12 (D) | **Uso inicial: só a RE9 Imob, numa VPS, em `crmimob.re9imob.com.br`** | A fase 1 é uma **instalação self-host de uma organização**, usando o kit que já existe (`hostgator-setup-kit/`) com as imagens do fork. A camada comercial SaaS (E19) continua no plano, mas só depois que a RE9 Imob validar o produto. Nenhuma decisão desta fase pode impedir o multi-imobiliária depois |
+| 13 (E) | **Banco Inter** | A cobrança da assinatura SaaS (E19) usa a **API Pix/boleto do Inter** (OAuth + certificado mTLS da conta PJ, webhook de pagamento). Não é necessária na fase 1 |
 
 ---
 
@@ -87,7 +92,7 @@ Imobiliárias de venda perdem negócio em cinco pontos:
 | **Operador da plataforma (RE9)** | Clientes, planos, cobrança, saúde, suporte | `platform_admin` (já existe) |
 
 Público-alvo: primeiro imobiliárias de usados (2 a 50 corretores) e corretores autônomos. Depois,
-imobiliárias de lançamentos (fase opcional).
+imobiliárias e corretores que vendem lançamentos (desde a fase 1).
 
 ---
 
@@ -141,13 +146,13 @@ por PR, o que diminui a divergência:
 | Tema | Decisão |
 |---|---|
 | **Tenancy** | Uma instalação e N imobiliárias, cada uma uma `organization`. O RLS com teste de isolamento já existe e continua obrigatório |
-| **Hospedagem** | Produção: app, worker e scheduler em containers (VPS dedicada ou cluster) atrás do Caddy, com Supabase gerenciado (plano Pro: backups diários, PITR opcional, sem pausa). Staging idêntico, com dados sintéticos |
+| **Hospedagem** | **Agora (fase 1–2):** a VPS da RE9 em `crmimob.re9imob.com.br`, instalada pelo kit (`install.sh`) com as imagens do fork, `app` + `worker` + `scheduler` atrás do proxy, Supabase gerenciado. **Depois (SaaS):** mesma arquitetura com mais capacidade, staging idêntico com dados sintéticos e Supabase Pro (backups diários, sem pausa) |
 | **Domínios** | `app.<dominio-imobcrm>` para o CRM. Vitrine em `<imobiliaria>.<dominio-imobcrm>` ou **domínio próprio do cliente**, com TLS automático pelo **on-demand TLS do Caddy** (gratuito, Let's Encrypt), liberado por um endpoint `ask` que confere o domínio na tabela |
 | **Cadastro** | Cadastro público com teste grátis (14 dias), sobre o fluxo que já existe (`registration_requests`, `lib/auth/registration-requests.ts`), sem aprovação manual quando o plano for self-service. O onboarding aplica o **kit imobiliário** (E1) |
-| **Planos e limites** | Tabela `saas_plans` com limites (corretores, imóveis ativos, números de WhatsApp, créditos de IA, GB de fotos, portais) e `saas_subscriptions` por organização. Os limites são aplicados no servidor, e o bloqueio por inadimplência usa a tela `app/account-suspended` (já existe) |
-| **Cobrança da assinatura** | Pix e boleto emitidos pela **API do banco PJ da RE9** (Banco Inter e Efí oferecem cobrança Pix com tarifa zero ou baixa para PJ; conferir a tarifa atual). Webhook de baixa. A régua de cobrança pelo WhatsApp e por e-mail usa os follow-ups e campanhas existentes. A lógica de planos é código próprio e simples; não é preciso um motor de billing de terceiros no começo |
-| **WhatsApp** | Dois caminhos por cliente: **API oficial da Meta** (Cloud API, já suportada em `lib/channels/meta`; sem custo de licença e mais estável para SaaS, com custo por conversa pago na conta Meta do cliente) ou **WAHA** (QR). O WAHA Plus é licenciado por instalação; conferir o custo e o limite de sessões. Recomendação: API oficial como padrão para clientes novos e WAHA como alternativa |
-| **IA** | Ver a decisão em aberto na §11. O controle de gasto por organização já existe (`ai_budgets`) |
+| **Planos e limites** | Tabela `saas_plans` com limites (corretores, imóveis ativos, números de WhatsApp, GB de fotos, portais; a IA não entra no plano porque a chave é de cada imobiliária) e `saas_subscriptions` por organização. Os limites são aplicados no servidor, e o bloqueio por inadimplência usa a tela `app/account-suspended` (já existe) |
+| **Cobrança da assinatura** | Pix e boleto emitidos pela **API do Banco Inter** (conta PJ da RE9: OAuth + certificado mTLS; conferir a tarifa atual). Webhook de baixa. A régua de cobrança pelo WhatsApp e por e-mail usa os follow-ups e campanhas existentes. A lógica de planos é código próprio e simples; não é preciso um motor de billing de terceiros no começo |
+| **WhatsApp** | Três caminhos, escolhidos por número: **API oficial da Meta** (padrão; já suportada em `lib/channels/meta`, custo por conversa na conta Meta do cliente), **WAHA** (QR; já suportado; o WAHA Plus é licenciado, conferir o custo e o limite de sessões) e **Evolution API v2** (QR; open source Apache-2.0, sem licença; adaptador novo no E20). Os dois não oficiais passam pelo mesmo anti-banimento (throttle, jitter, janela, STOP) |
+| **IA** | **Chave da própria imobiliária** (decisão A), cadastrada no onboarding. O controle de gasto por organização (`ai_budgets`) vem ligado com teto sugerido, e o painel de uso já existente (`/app/ai/usage`) mostra o custo |
 | **Armazenamento** | Supabase Storage no começo. Quando fotos passarem de algumas centenas de GB, **MinIO** (S3 open source) ou Cloudflare R2 (sem taxa de saída). Fotos convertidas para WebP ≤ 300 KB no upload |
 | **Observabilidade** | Sentry (já integrado; plano gratuito ou self-host) + uptime externo. A Central de avisos do produto é o laço de retorno para o cliente |
 | **Deploy** | CI publica as imagens do fork no GHCR, deploy em staging e depois em produção. Migrations aplicadas pelo `baseline.sql` idempotente ou pela cadeia de migrations com backup antes. Rollback por imagem anterior |
@@ -166,7 +171,8 @@ por PR, o que diminui a divergência:
    no repositório do upstream e precisa ser ajustado.
 5. **Proteção da branch `main`** com os cinco checks obrigatórios.
 6. **Marca ImobCRM** configurada no banco (nome, logo, cor, e-mail remetente).
-7. **Ambientes:** staging e produção, backup automático testado com restauração mensal.
+7. **Ambientes:** a produção da fase 1 é a VPS da RE9 Imob (`crmimob.re9imob.com.br`: DNS, TLS, proxy), instalada pelo kit do fork. Um ambiente de testes local ou numa segunda VPS pequena. Backup automático (`backup.sh`, já existe) testado com restauração mensal.
+8. **Depois de cada deploy**, confirmar que o domínio responde 307 (redireciona para o login) e não 404, como manda `docs/runbooks/deploy.md`.
 
 ### 2.4 Stack técnica — open source ou sem custo
 
@@ -184,6 +190,8 @@ por PR, o que diminui a divergência:
 | **OCR de documentos** | IA multimodal que o projeto já usa (`media-derive`) ou **Tesseract** para reduzir custo | Apache-2.0 | Classificar "isto é um RG/comprovante" |
 | **Push no celular** | **Web Push** (`web-push`, já é dependência) + PWA | MIT | Sem Firebase |
 | **E-mail transacional** | SMTP que já existe (`lib/email/roteador.ts`) com **Amazon SES** (baixo custo) ou **Postal** self-hosted | — | Para convite, alerta e proposta |
+| **WhatsApp não oficial** | **WAHA** (já existe) e **Evolution API v2** (container ao lado do app) | Apache-2.0 (Evolution) | Evolution v2 roda com o próprio Postgres/Redis ou com os da instalação; fixar a tag da imagem (doutrina de packaging) |
+| **Cobrança da assinatura (SaaS)** | **API do Banco Inter** (Pix com vencimento e boleto) | tarifas da conta PJ | Só no E19 |
 | **Busca** | **Postgres** (`pg_trgm` + `pgvector`, já instalados) | — | Sem Elasticsearch |
 | **Armazenamento** | Supabase Storage, depois **MinIO** | AGPL | — |
 | **BI interno** (opcional) | Telas próprias com **Recharts** (já é dependência); **Metabase OSS** para a RE9 | MIT / AGPL | — |
@@ -207,7 +215,7 @@ Tudo isso entra pela tripla de migration.
 ### 3.1 Diagrama
 
 ```
-                      ┌────────────────┐   (fase opcional: lançamentos)
+                      ┌────────────────┐   (lançamentos — fase 1)
                       │  developments  │──► development_blocks ──► properties (unidades)
                       └────────────────┘
  contacts ◄─owner──┐  ┌────────────────┐  ┌──────────────────────┐
@@ -275,9 +283,15 @@ Tudo isso entra pela tripla de migration.
 | `compliance_records` | PLD/COAF | `kind` (`cadastro_pld`,`operacao_registrada`,`comunicacao_coaf`,`declaracao_nao_ocorrencia`), `pep`, `beneficial_owner`, valores (inclusive em espécie), protocolo. **Visível só ao papel `compliance`** |
 | `saas_plans` / `saas_subscriptions` / `saas_invoices` | Assinatura do ImobCRM | Plano, limites, ciclo, status (`trial`,`active`,`past_due`,`suspended`,`cancelled`), cobranças Pix/boleto. **Sem RLS de tenant para escrita**: só a plataforma escreve, e a organização lê a sua |
 
-**Na fase opcional de lançamentos:** `developments`, `development_blocks`,
-`development_price_tables` (versionada) e `unit_reservations` (uma reserva ativa por unidade, com
-expiração por cron).
+**Lançamentos (fase 1, decisão C):**
+
+| Tabela | Para quê | Pontos-chave |
+|---|---|---|
+| `developments` | Empreendimento | Nome, incorporadora (`developer_contact_id`), endereço, `stage` (`breve_lancamento`,`lancamento`,`em_obras`,`pronto`), previsão de entrega, registro da incorporação (RI), memorial, links de book, decorado e tour, VGV previsto, comissão padrão do empreendimento |
+| `development_blocks` | Torre/bloco/quadra | Nome, andares, unidades por andar. A geração em lote das unidades cria linhas em `properties` com `development_id` |
+| `development_typologies` | Tipologia (planta) | Nome (ex.: "2 dorms com suíte"), área, quartos, vagas, planta. As unidades herdam os dados da tipologia |
+| `development_price_tables` | Tabela de preços | Versionada por ponteiro (igual a `promise_table_versions`): preço por unidade, fluxo (entrada, mensais, intermediárias, chaves), índice de correção (INCC até as chaves) e validade |
+| `unit_reservations` | Reserva de unidade | `lead_id`, `property_id`, corretor, `expires_at`. **Uma reserva ativa por unidade** (índice único parcial). Expiração por cron, fila de espera por unidade |
 
 **Mudanças no núcleo:**
 
@@ -322,6 +336,7 @@ Os consumidores são a tela de Match, a ferramenta `crm_match_properties`, o gat
 | `crm_register_visit_feedback` | reter | baixo | Ficha pós-visita pela conversa |
 | `crm_create_proposal_draft` | vender | **crítico** | Rascunho que **sempre** passa por aprovação humana |
 | `crm_create_property_draft` | atender | médio | Agente de captação: proprietário descreve e manda fotos, e o sistema cria um rascunho para o captador |
+| `crm_list_developments` / `crm_get_unit_availability` | vender | baixo | Lançamentos: tipologias, unidades disponíveis e tabela vigente, com o fluxo de pagamento calculado |
 
 **Envio de mídia.** Generalizar `send_message.produto_codigo` para `imovel_codigo`: capa + 4 fotos,
 resumo, link da vitrine e, se houver, vídeo (`sendVideo`), ficha em PDF (`sendFile`) e pino de
@@ -359,9 +374,10 @@ base legal (`guardrails/lgpd/legal-basis.ts`).
 |---|---|
 | **Atendimento de Vendas** | Qualifica, busca, envia, simula, agenda visita |
 | **Captação** | Proprietário que quer vender: dados, fotos e avaliação agendada |
+| **Lançamentos** | Tipologias, unidades disponíveis, tabela e fluxo de pagamento vigentes, visita ao decorado/estande, reserva (com humano) |
 | **Pós-visita e reengajamento** | Ficha pós-visita e reativação por match |
 
-**Roteador:** *comprar* · *vender/anunciar meu imóvel* · *já sou cliente/falar com corretor* ·
+**Roteador:** *comprar pronto/usado* · *lançamento/na planta* · *vender/anunciar meu imóvel* · *já sou cliente/falar com corretor* ·
 *outros*. Pedidos de **aluguel** recebem uma resposta educada de que a imobiliária trabalha só com
 venda, que é configurável.
 
@@ -409,6 +425,7 @@ sucesso, e um merge de `upstream/main` sem conflito em migration.
   tudo):
   - **Funis:**
     - **Venda:** Novo lead → Em atendimento → Qualificado → Visita agendada → Visitou → Proposta → Documentação/Financiamento → Vendido | Perdido
+    - **Lançamento:** Interessado → Em atendimento → Visitou decorado/estande → Simulação → Reserva → Contrato → Vendido | Perdido
     - **Captação:** Proprietário novo → Avaliação agendada → Avaliado → Autorização assinada → Fotos e anúncio → Publicado | Não captado
   - **Vocabulário:** Cliente / Negócio / Vendido / Perdido.
   - **Motivos de perda:** crédito negado, comprou com outro, desistiu, preço, localização, imóvel
@@ -416,6 +433,7 @@ sucesso, e um merge de `upstream/main` sem conflito em migration.
   - **Campos obrigatórios por etapa:** imóvel e valor em "Proposta".
   - **Tipos de agenda:** Visita, Avaliação, Assinatura, Plantão.
   - **Agentes, roteador, skills, follow-ups e FAQ** da §4.
+  - **Passo "Conectar sua IA"** (decisão A): tutorial leigo com prints para criar a chave, teste da chave na hora, estimativa de custo mensal e teto de gasto já ligado.
   - **Menu imobiliário:** saem Comandas, Faturamento de comanda, Produtos, Prospecção B2B e
     Nuvemshop, pelo `interface_settings` ou por um módulo desligado na instância.
 - **Vocabulário em toda a interface:** `useVocabulario(pipelineId)` em `NewLeadDialog`,
@@ -553,7 +571,7 @@ sucesso, e um merge de `upstream/main` sem conflito em migration.
 - Extrato do corretor e relatório para NF/RPA.
 - **Aceite:** uma venda de R$ 500 mil a 6% gera os splits certos, e o distrato estorna tudo.
 
-### E12 — Lançamentos · *opcional, fase 4*
+### E12 — Lançamentos · *fase 1 (decisão C)*
 
 - Empreendimento, torres e unidades geradas em lote.
 - **Espelho de vendas** em tempo real, tabela de preços versionada e fluxo de pagamento com INCC.
@@ -589,11 +607,20 @@ Ver §7. O `/app/metrics` ganha as abas Vendas, Captação, Portais e Corretores
 - **Instalação:** ícones de 192 e 512 px no `manifest.ts`.
 - **Aceite:** do push à visita marcada em menos de 2 minutos, só pelo celular.
 
-### E19 — Camada comercial SaaS · *fase 3, antes do 2º cliente pagante*
+### E20 — Evolution API v2 como canal · *fase 2*
+
+- **Adaptador** `lib/channels/adapters/evolution.ts`, no mesmo contrato de `waha.ts`: enviar texto, mídia, localização e cartão; presença; marcar como lido.
+- **Provider** `evolution` no CHECK de `channel_sessions` (forward-fix num bloco único do apêndice) e em `PROVIDERS_DE_MENSAGEM` (`lib/channels/capabilities.ts`), declarando as capacidades reais medidas na documentação da Evolution.
+- **Webhook de entrada** por token no caminho, com autenticação (apikey/assinatura da instância) e idempotência `unique (organization_id, external_id)`. Eventos: `MESSAGES_UPSERT`, `MESSAGES_UPDATE`, `CONNECTION_UPDATE`, `QRCODE_UPDATED`. Grupos (`@g.us`) ignorados, `fromMe` sem duplicar, como no WAHA.
+- **Conexão pela tela** com QR Code e código de pareamento, igual ao fluxo do WAHA (`lib/channels/connect-waha.ts`).
+- **Serviço** `evolution` no `docker-compose.prod.yml` com imagem de **tag fixa**, atrás de um perfil (liga quem usa). Variáveis novas com default que não quebra `.env` antigo.
+- **Aceite:** com um número de teste, conversa completa de ida e volta (texto, foto, áudio, localização) com o agente de IA respondendo; queda da conexão aparece na Central; `pnpm test:shell` verde.
+
+### E19 — Camada comercial SaaS · *depois da validação na RE9 Imob*
 
 - **Cadastro público:** site de vendas → cadastro → teste grátis de 14 dias → onboarding do kit.
 - **Planos e limites** aplicados no servidor, com aviso ao se aproximar do limite.
-- **Cobrança** Pix/boleto pela API bancária, com régua de cobrança, bloqueio suave (somente
+- **Cobrança** Pix/boleto pela **API do Banco Inter**, com régua de cobrança, bloqueio suave (somente
   leitura) e depois suspensão.
 - **Console da RE9** (estende `/admin/tenants`, que já existe): receita, clientes, uso, saúde,
   inadimplência e sessão de suporte auditada.
@@ -649,14 +676,14 @@ inteira. São aproximadas e serão recalibradas ao fim da fase 1.
 
 | Fase | Épicos | Resultado | Estimativa |
 |---|---|---|---|
-| **0 — Fundação** | E0 | Fork com a marca ImobCRM, staging e produção, deploy pelo CI, backup testado | 1–2 semanas |
-| **1 — RE9 Imob operando** | E1, E2 (cadastro, fotos, mapa), E5 (busca + visita básica) | **A RE9 Imob opera no ImobCRM**: funis, estoque próprio, agente de vendas buscando o estoque real e marcando visita | 4–5 semanas |
-| **2 — Portais e match** | E7 (Grupo OLX + Imovelweb), E4, E6, E14 (básica), E5 (completo), E15 (CRECI) | Leads dos portais com resposta instantânea, publicação automática, match, visitas completas, vitrine | 6–8 semanas |
-| **3 — Operação completa + SaaS** | E8, E3, E9, E10 (DocuSeal), E11, E16, E17, E19, E15 (PLD) | Roleta com prazo, captação com ACM, propostas, contratos assinados, comissões, BI, app do corretor, **venda para outras imobiliárias** | 10–12 semanas |
-| **4 — Expansão (opcional)** | E12, E14 (completa), Meta Lead Ads | Lançamentos e landing pages | 6–8 semanas |
+| **0 — Fundação** | E0 | Fork com a marca ImobCRM instalado na VPS em `crmimob.re9imob.com.br`, imagens publicadas pelo CI, backup testado | 1–2 semanas |
+| **1 — RE9 Imob operando** | E1 (com o passo da chave de IA), E2, **E12**, E5 (busca + visita básica) | **A RE9 Imob opera no ImobCRM**: funis de Venda, Lançamento e Captação; estoque de usados **e** lançamentos com espelho de vendas; agente buscando o estoque real e marcando visita | 6–8 semanas |
+| **2 — Portais, match e canais** | E7 (Grupo OLX + Imovelweb), E4, E6, E14 (básica), E5 (completo), E15 (CRECI), **E20** (Evolution v2) | Leads dos portais com resposta instantânea, publicação automática, match, visitas completas, vitrine, três opções de WhatsApp | 7–9 semanas |
+| **3 — Operação completa** | E8, E3, E9, E10 (DocuSeal), E11, E16, E17, E15 (PLD) | Roleta com prazo, captação com ACM, propostas, contratos assinados, comissões, BI, app do corretor | 9–11 semanas |
+| **4 — SaaS** | E19 (Inter), E14 (completa, domínio próprio), Meta Lead Ads | Venda para outras imobiliárias: cadastro, planos, cobrança, console da RE9 | 5–7 semanas |
 
 A **RE9 Imob opera de verdade a partir da fase 1** e valida cada fase seguinte. A comercialização
-para terceiros começa ao fim da fase 3.
+para terceiros começa na fase 4.
 
 ---
 
@@ -697,13 +724,14 @@ Além dos 18 itens do `CLAUDE.md`, todo épico cumpre estes critérios:
 
 ## 11. Decisões ainda em aberto
 
+As decisões A a E foram tomadas (§0, itens 9 a 13). Restam pontos operacionais, sem impacto na fase 0:
+
 | # | Pergunta | Recomendação |
 |---|---|---|
-| A | **Quem paga a IA?** A RE9 fornece a chave e embute o custo no plano, ou cada imobiliária cadastra a própria chave? | **A RE9 fornece**, com créditos mensais por plano e excedente cobrado. Um leigo não sabe criar chave de API, e o controle de gasto por organização já existe |
-| B | **WhatsApp padrão:** API oficial da Meta ou WAHA (QR)? | **API oficial** para SaaS (estável, sem risco de banimento por QR, sem licença WAHA). WAHA como opção para quem não tem conta Meta verificada |
-| C | **Lançamentos** entram no roadmap (fase 4) ou saem? | Manter como opcional. Decidir ao fim da fase 3, com a demanda dos clientes |
-| D | **Domínio** do ImobCRM (ex.: `imobcrm.com.br`) já está registrado? | Registrar o `.com.br` e o `.com` antes da fase 2 (vitrine e e-mails) |
-| E | **Banco PJ** para cobrar a assinatura (Inter, Efí, outro)? | O que a RE9 já usa, se tiver API de cobrança Pix |
+| F | **Supabase:** nuvem (supabase.com) ou dentro da própria VPS (`supabase-single-server`)? | **Nuvem, no começo.** Menos manutenção e backup incluso; o plano gratuito pausa por inatividade, então usar o Pro assim que a RE9 Imob operar de verdade |
+| G | **Tamanho da VPS** | 4 vCPU e 8 GB de RAM para app + worker + scheduler + Redis + Evolution/WAHA + DocuSeal. Conferir o que já existe |
+| H | **Conta Meta** da RE9 Imob verificada (Business Manager + número na API oficial)? | Iniciar a verificação já, porque ela leva dias e trava o canal oficial |
+| I | **Planos do Grupo OLX e do Imovelweb** da RE9 Imob já incluem integração (feed XML e entrega de leads)? | Pedir ao atendimento de cada portal a documentação e as credenciais de integração |
 
 ---
 
@@ -726,4 +754,4 @@ Além dos 18 itens do `CLAUDE.md`, todo épico cumpre estes critérios:
 | IA (agentes, roteadores, follow-ups, conhecimento, skills, casos…) | Manter | Com conteúdo imobiliário semeado |
 | Conexões, Webhooks, Anúncios Meta, Auditoria, LGPD, Equipe, Configurações, Extensões | Manter | Configurações ganham "Portais", "CRECI e compliance", "Comissões" e "Assinatura e plano" |
 | Desempenho | **Adaptar** | Abas imobiliárias (§7) |
-| **Novas** | — | Imóveis, Captação/ACM, Match, Propostas, Contratos, Comissões, Portais, Painel do corretor, App móvel, Vitrine pública, Console SaaS; Empreendimentos/Espelho (opcional) |
+| **Novas** | — | Imóveis, Captação/ACM, Match, Propostas, Contratos, Comissões, Portais, Painel do corretor, App móvel, Vitrine pública, Console SaaS, Empreendimentos/Espelho de vendas |
