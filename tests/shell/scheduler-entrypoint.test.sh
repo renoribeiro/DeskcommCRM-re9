@@ -98,6 +98,21 @@ check "sai com código 1" test "$RC" -eq 1
 check "explica o motivo na saída" grep -q "INTERNAL_SECRET" "$TMP/saida"
 check "não deixou crontab pela metade" test ! -s "$TMP/crontab"
 
+echo "scheduler: a origem do app (padrão app:3000; o compose do Dokploy repassa outra)"
+RC="$(rodar 'segredo-simples')"
+check "sem SCHEDULER_APP_ORIGIN, chama http://app:3000 (como sempre)" \
+  bash -c '[ "$(grep -c "\"http://app:3000/api/v1/cron/" "$1")" -eq "$(grep -c . "$1")" ]' _ "$TMP/crontab"
+: > "$TMP/crontab"
+env INTERNAL_SECRET=s SCHEDULER_APP_ORIGIN=http://imobcrm-app:3000 PATH="$TMP/bin:$PATH" \
+  CRONTAB_PATH="$TMP/crontab" sh "$ENTRYPOINT" >"$TMP/saida" 2>&1; RC=$?
+check "com SCHEDULER_APP_ORIGIN, toda linha usa a origem dada" \
+  bash -c '[ "$1" -eq 0 ] && [ "$(grep -c "\"http://imobcrm-app:3000/api/v1/cron/" "$2")" -eq "$(grep -c . "$2")" ]' _ "$RC" "$TMP/crontab"
+: > "$TMP/crontab"
+env INTERNAL_SECRET=s SCHEDULER_APP_ORIGIN='http://x`whoami`:3000' PATH="$TMP/bin:$PATH" \
+  CRONTAB_PATH="$TMP/crontab" sh "$ENTRYPOINT" >"$TMP/saida" 2>&1; RC=$?
+check "origem com metacaractere é recusada (ela entra entre aspas duplas no crontab)" \
+  bash -c '[ "$1" -eq 1 ] && [ ! -s "$2" ] && grep -q SCHEDULER_APP_ORIGIN "$3"' _ "$RC" "$TMP/crontab" "$TMP/saida"
+
 if [ "$fail" -eq 0 ]; then
   echo "OK — todas as provas passaram."
 else

@@ -240,8 +240,11 @@ describe("o compose do Dokploy diz o mesmo que o kit", () => {
     it(`a imagem de ${servico} usa o namespace de IMG_NS`, () => {
       const texto = fs.readFileSync(path.join(RAIZ, "docker-compose.dokploy.yml"), "utf8");
       const bloco = texto.split(new RegExp(`^  ${servico}:\\s*$`, "m"))[1] ?? "";
-      const m = bloco.match(/^\s*image: (\S+):\$\{IMAGE_TAG:-stable\}\s*$/m);
-      expect(m, `não achei \`image: <ref>:\${IMAGE_TAG:-stable}\` no serviço ${servico}`).not.toBeNull();
+      // No Dokploy a versão é OBRIGATÓRIA (`${IMAGE_TAG:?…}`), sem cair em
+      // `stable`: o registro do fork pode nem ter essa tag, e a instalação de
+      // cliente aponta para número de versão (doutrina de packaging, item 3).
+      const m = bloco.match(/^\s*image: (\S+):\$\{IMAGE_TAG:\?defina IMAGE_TAG [^}]+\}\s*$/m);
+      expect(m, `não achei \`image: <ref>:\${IMAGE_TAG:?defina IMAGE_TAG …}\` no serviço ${servico}`).not.toBeNull();
       expect(m![1]).toBe(`${imgNs()}/${reposDoKit()[i]}`);
     });
   });
