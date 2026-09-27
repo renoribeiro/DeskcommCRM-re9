@@ -75,7 +75,7 @@ const SUPABASE = "supabase";
 const BASELINE = "supabase/baseline.sql";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// As três chamadas congeladas: existem no código, NÃO existem no schema
+// As chamadas congeladas: existem no código, NÃO existem no schema
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // Toda entrada precisa do motivo escrito e do `arquivo:linha` do CAMINHO DE
@@ -84,20 +84,11 @@ const BASELINE = "supabase/baseline.sql";
 // vermelho pedindo a remoção daqui (é o `it` abaixo que faz isso).
 
 const CONGELADAS: Record<string, { degradacao: string; porque: string }> = {
-  decrypt_cpf: {
-    degradacao: "app/api/v1/contacts/_handler.ts:324",
-    porque:
-      "A chamada já está prevista para não existir: se o erro volta, o handler " +
-      "loga `decrypt_cpf RPC unavailable` e a resposta segue SEM CPF — o contato " +
-      "não quebra. Criar a RPC no banco é decisão de produto, não deste gate.",
-  },
-  encrypt_cpf: {
-    degradacao: "lib/contacts/cpf.ts:36",
-    porque:
-      "O caminho de degradação está escrito na própria função: sem a RPC, loga " +
-      "`encrypt_cpf RPC unavailable — storing cpf_hash only` e devolve `null`, e " +
-      "o contato é gravado só com o hash. Mesma decisão de produto, fora do gate.",
-  },
+  // `decrypt_cpf` e `encrypt_cpf` saíram daqui (A3 da auditoria de segurança):
+  // a cifra do CPF passou para o servidor Node (`lib/contacts/cpf.ts`,
+  // AES-256-GCM com `CPF_ENCRYPTION_KEY`), e as duas RPCs deixaram de ser
+  // chamadas. A "degradação" que as justificava não degradava: sem a cifra o
+  // CHECK `contacts_cpf_consistency` recusava o insert.
   jsonb_set_last_alarm_at: {
     degradacao: "lib/lgpd/sla-alarm.ts:203",
     porque:

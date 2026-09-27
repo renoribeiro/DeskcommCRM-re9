@@ -24,7 +24,7 @@ import { type NextRequest } from "next/server";
 import { ok, fail } from "@/lib/api/wrappers";
 import { requireRole } from "@/lib/auth/require-role";
 import { audit } from "@/lib/audit";
-import { encryptCpfSql, hashCpf } from "@/lib/contacts/cpf";
+import { colunasDoCpf, cpfCriptoDisponivel } from "@/lib/contacts/cpf";
 import { traduzir } from "@/lib/i18n/dicionario";
 import {
   CSV_MAX_BYTES,
@@ -180,6 +180,24 @@ export async function POST(req: NextRequest): Promise<Response> {
     return ok(resumo, { requestId });
   }
 
+  // ─── CPF sem chave de criptografia: recusa ANTES de gravar qualquer linha ──
+  //
+  // Não é desfecho de linha: é a instalação que não tem `CPF_ENCRYPTION_KEY`, e
+  // todas as linhas com CPF falhariam pelo mesmo motivo. Importar o resto e
+  // descartar o CPF em silêncio perderia o dado; gravar só o hash viola o CHECK
+  // `contacts_cpf_consistency`. Um 503 com a causa é o que o operador consegue
+  // consertar.
+  if (candidatos.some((c) => c.contato.cpf) && !cpfCriptoDisponivel()) {
+    return fail(
+      "cpf_encryption_unavailable",
+      t(
+        "Esta instalação não tem a chave de criptografia de CPF configurada (CPF_ENCRYPTION_KEY). Salve o contato sem CPF ou peça a quem administra o servidor para configurá-la.",
+      ),
+      503,
+      { requestId },
+    );
+  }
+
   // ─── Pré-filtro de duplicados contra o banco (uma query por identificador) ──
   //
   // Os índices únicos são parciais (excluem mesclados/anonimizados), então a
@@ -248,11 +266,9 @@ export async function POST(req: NextRequest): Promise<Response> {
       consent: {},
     };
     if (contato.cpf) {
-      insertRow.cpf_hash = hashCpf(contato.cpf as string);
-      // LGPD: além do hash (dedupe), grava a versão cifrada — igual ao create
-      // unitário, senão o contato importado nasce sem CPF recuperável.
-      const enc = await encryptCpfSql(supabase, contato.cpf as string);
-      if (enc) insertRow.cpf_encrypted = enc;
+      // LGPD: hash (dedupe) e cifra SEMPRE juntos — igual ao create unitário,
+      // senão o contato importado nasce sem CPF recuperável (e o CHECK recusa).
+      Object.assign(insertRow, colunasDoCpf(contato.cpf as string));
     }
 
     const { data: criado, error: insErr } = await supabase
