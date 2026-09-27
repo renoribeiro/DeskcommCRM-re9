@@ -56,7 +56,9 @@ beforeEach(() => {
   deps.role.mockResolvedValue({
     ok: true,
     user: { id: "human", idioma: "pt-BR" },
-    org: { orgId: "org-teto" },
+    // `requireRole` devolve o papel EFETIVO — a rota o usa para recusar token
+    // com papel acima do de quem cria (A4).
+    org: { orgId: "org-teto", role: "admin" },
   });
 });
 

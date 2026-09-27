@@ -121,6 +121,15 @@ const PLATAFORMA: readonly { caminho: string; motivo: string }[] = [
  */
 const SEM_FILTRO_LIBERADO: readonly { arquivo: string; tabela: string; motivo: string }[] = [
   {
+    arquivo: "app/api/v1/cron/data-retention/route.ts",
+    tabela: "api_tokens",
+    motivo:
+      "Poda diária da INSTALAÇÃO, sem organização a escolher (como as funções de expurgo do " +
+      "mesmo cron): apaga só token EFÊMERO do agente (`agent-run:*` + `actor:ai_agent`), " +
+      "vencido há mais de um dia e que nenhuma linha de `api_audit_log` nem de " +
+      "`conversation_drafts` cita. Não lê nem devolve dado de inquilino — só ids para o DELETE.",
+  },
+  {
     arquivo: "app/admin/(protected)/extensoes/page.tsx",
     tabela: "organization_extensions",
     motivo:

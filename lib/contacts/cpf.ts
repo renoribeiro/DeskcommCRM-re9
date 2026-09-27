@@ -43,8 +43,10 @@ const TAG_BYTES = 16;
 /** Material mínimo aceito: abaixo disso a chave é erro de configuração, não chave. */
 const MATERIAL_MINIMO_BYTES = 16;
 
-const ROTULO_CIFRA = "deskcomm/contacts/cpf/aes-256-gcm/v1";
-const ROTULO_HASH = "deskcomm/contacts/cpf/hmac-sha256/v1";
+// Rótulos de separação de domínio do HKDF. Sem marca do produto: são
+// constantes de protocolo, e trocá-las trocaria as chaves derivadas.
+const ROTULO_CIFRA = "crm/contacts/cpf/aes-256-gcm/v1";
+const ROTULO_HASH = "crm/contacts/cpf/hmac-sha256/v1";
 
 /** Recusa de escrita/leitura de CPF por falta (ou defeito) da `CPF_ENCRYPTION_KEY`. */
 export class CpfIndisponivelError extends Error {
