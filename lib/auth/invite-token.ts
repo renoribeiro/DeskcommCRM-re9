@@ -4,18 +4,61 @@
  *
  * Format: `<body>.<sig>` where
  *   - body = base64url(JSON({invite_id, email, organization_id, role, exp}))
- *   - sig  = base64url(HMAC_SHA256(secret, body))
+ *   - sig  = base64url(HMAC_SHA256(chave, body))
  *
- * Secret resolution: INVITE_TOKEN_SECRET → INTERNAL_SECRET → "dev-fallback".
- * Production deployments MUST set one of the first two. Verification uses
- * `timingSafeEqual` to avoid timing oracles.
+ * ## A chave é DERIVADA, e a falta dela FECHA
+ *
+ * A chave é `HMAC-SHA256(segredo, "crm:invite-token:v1")`, com o segredo em
+ * `INVITE_TOKEN_SECRET` ou, sem ele, `INTERNAL_SECRET` — o mesmo padrão de
+ * `lib/auth/chave-do-estado-oauth.ts`, com outro rótulo. Antes o token era
+ * assinado com o `INTERNAL_SECRET` CRU, que também é o bearer dos crons e que
+ * o runbook do relógio HTTP manda cadastrar num serviço de terceiros: quem
+ * visse aquele bearer forjava convite de `admin` para qualquer organização.
+ * Com a separação de domínio, o bearer não é mais a chave de assinatura, e a
+ * chave derivada não revela o segredo.
+ *
+ * E faltava fechar: sem segredo, a assinatura caía em `"dev-fallback"` — uma
+ * chave pública, escrita neste arquivo. Agora, sem segredo, assinar e conferir
+ * LANÇAM, fora do ambiente de teste (`NODE_ENV=test`), que usa uma chave fixa e
+ * declaradamente só de teste. Segredo vazio conta como ausente: o `.env.example`
+ * entrega `INTERNAL_SECRET=` e, em desenvolvimento, `lib/env.ts` o aceita vazio.
+ *
+ * O rótulo não leva o nome do produto de propósito: o produto é revendido com
+ * outra marca (`tests/unit/branding.test.ts`). Troca de rótulo ou de segredo
+ * invalida os convites pendentes (valem 24 h): quem não aceitou recebe outro.
+ *
+ * Verification uses `timingSafeEqual` to avoid timing oracles.
  */
 import { z } from "zod";
 import { interfaceSettingsSchema, type InterfaceSettings } from "@/lib/navigation/interface";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-const SECRET = (): string =>
-  process.env.INVITE_TOKEN_SECRET ?? process.env.INTERNAL_SECRET ?? "dev-fallback";
+export const ROTULO_DA_CHAVE_DO_CONVITE = "crm:invite-token:v1";
+
+/** Segredo SÓ do ambiente de teste (`NODE_ENV=test`), nunca alcançável em produção. */
+const SEGREDO_SO_DE_TESTE = "somente-teste:convite-sem-segredo";
+
+export class ConviteSemSegredoError extends Error {
+  constructor() {
+    super(
+      "invite_token_sem_segredo: defina INTERNAL_SECRET (ou INVITE_TOKEN_SECRET) para assinar e conferir convites",
+    );
+    this.name = "ConviteSemSegredoError";
+  }
+}
+
+/** A chave de assinatura dos convites, derivada do segredo mestre. */
+export function chaveDoConvite(segredoMestre: string): Buffer {
+  return createHmac("sha256", segredoMestre).update(ROTULO_DA_CHAVE_DO_CONVITE, "utf8").digest();
+}
+
+function chaveEmVigor(): Buffer {
+  const mestre =
+    (process.env.INVITE_TOKEN_SECRET ?? "").trim() || (process.env.INTERNAL_SECRET ?? "").trim();
+  if (mestre) return chaveDoConvite(mestre);
+  if (process.env.NODE_ENV === "test") return chaveDoConvite(SEGREDO_SO_DE_TESTE);
+  throw new ConviteSemSegredoError();
+}
 
 export interface InvitePayload {
   interface_settings?: InterfaceSettings;
@@ -35,7 +78,7 @@ function b64url(buf: Buffer): string {
 export function signInviteToken(payload: InvitePayload): string {
   const json = JSON.stringify(payload);
   const body = b64url(Buffer.from(json, "utf8"));
-  const sig = b64url(createHmac("sha256", SECRET()).update(body).digest());
+  const sig = b64url(createHmac("sha256", chaveEmVigor()).update(body).digest());
   return `${body}.${sig}`;
 }
 
@@ -45,7 +88,7 @@ export function verifyInviteToken(token: string): InvitePayload | null {
   const [body, sig] = parts;
   if (!body || !sig) return null;
 
-  const expected = b64url(createHmac("sha256", SECRET()).update(body).digest());
+  const expected = b64url(createHmac("sha256", chaveEmVigor()).update(body).digest());
   if (sig.length !== expected.length) return null;
 
   try {
