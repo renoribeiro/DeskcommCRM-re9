@@ -125,6 +125,7 @@ bash /tmp/imobcrm/infra/dokploy/gerar-env.sh \
 Na aba **Logs** do serviço, o contêiner `setup` mostra:
 
 ```
+[setup] baixando o schema da versão 1.57.0: https://raw.githubusercontent.com/renoribeiro/DeskcommCRM-re9/v1.57.0/supabase/baseline.sql
 [setup] banco novo — aplicando o baseline (qualquer erro interrompe)
 [setup] tabelas em public: 180
 [setup] primeiro administrador: SEU-EMAIL@re9imob.com.br
@@ -149,6 +150,7 @@ a senha** em Configurações › Perfil.
 | `404 page not found` | O Traefik não achou o CRM: o `app` não subiu (veja os Logs) ou o DNS ainda não propagou |
 | Página abre, mas o login dá erro | O `api-gw` (gateway do Supabase) não subiu: veja os Logs dele |
 | `setup` termina com erro | A mensagem diz o passo. O mais comum é a chave do Supabase: gere tudo de novo **só** se o banco ainda não tiver sido criado |
+| `setup` diz `NÃO consegui baixar o schema da versão X` | O `setup` aplica o schema **da mesma versão das imagens** (`IMAGE_TAG`), baixado da tag `vX` do repositório — não o da branch que o Dokploy clonou, que pode estar em outra versão. Confira se a tag existe (`git ls-remote --tags https://github.com/renoribeiro/DeskcommCRM-re9`) e se a VPS alcança `raw.githubusercontent.com`. Ele não aplica outro schema no lugar: app e banco ficariam divergentes. Só para desenvolvimento e teste, `BASELINE_FONTE=clone` no Environment usa o `supabase/baseline.sql` do clone |
 | `setup` diz que o baseline não se aplicou e cita `storage.` | O serviço `storage` não criou o schema dele a tempo: veja os Logs do `storage` e faça **Deploy** de novo. O `setup` reprova de propósito: seguir deixaria o CRM sem os buckets de arquivos |
 | Compose recusa com `defina IMAGE_TAG` ou `defina REALTIME_DB_ENC_KEY` | Falta a variável no Environment. Gere com o passo A1 (instalação nova). Numa instalação que já subiu **antes** desta versão do arquivo, use `REALTIME_DB_ENC_KEY=supabaserealtime` (o valor que o Realtime já usa para cifrar o que guardou); trocar a chave depois quebra o Realtime |
 | `pull access denied` | Os pacotes do GitHub ainda estão privados (item 2 de "Antes de começar") |
@@ -159,9 +161,12 @@ a senha** em Configurações › Perfil.
    passo A1).
 2. Clique em **Deploy**.
 
-O `setup` reaplica o banco em modo atualização (é seguro e idempotente) antes do app novo subir. Se
-alguma parte do banco não se aplicar (um objeto que não existe, ou o schema `storage`), o `setup`
-**para** e o app antigo continua no ar: leia o log do `setup` antes de tentar de novo.
+O `setup` baixa o schema da versão nova (a tag `v` + `IMAGE_TAG`) e o reaplica em modo atualização
+(é seguro e idempotente) antes do app novo subir. A régua é a mesma do `update.sh` do kit: erros
+"já existe" são esperados; os de banco ocupado ou conexão caída levam a uma nova passada (até 3); e
+o resto aparece no log como `AVISO` sem parar a atualização. Duas coisas **param** o `setup` (e o
+app antigo continua no ar): a parte do `storage` que não se aplicou (o schema dele ainda não
+existia) e o `psql` que não chegou ao fim do arquivo. Leia o log do `setup` antes de tentar de novo.
 
 Depois da instalação, `OWNER_PASSWORD` pode sair do Environment: ela só é usada enquanto o
 administrador ainda não existe, e trocar o valor não troca a senha de quem já entrou.

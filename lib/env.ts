@@ -547,6 +547,19 @@ const schema = z.object({
   SIGNUP_MODE: z.string().optional().default(""),
 
   /**
+   * Como esta instalação foi montada, quando isso muda o que as telas de
+   * `/admin` ensinam. Hoje só existe `dokploy` — gravado FIXO pelo
+   * `docker-compose.dokploy.yml`, nunca pelo operador: ali o login (GoTrue) lê
+   * SMTP e cadastro do Environment do serviço, e só um novo Deploy os aplica —
+   * não o `update.sh` do kit nem o painel da nuvem. Vazio = o kit de sempre.
+   *
+   * `z.string()` e NÃO `z.enum`, pelo mesmo motivo de `SIGNUP_MODE`: valor
+   * inesperado não pode derrubar o app no import; quem lê compara com
+   * `"dokploy"` e trata o resto como vazio.
+   */
+  DEPLOY_MODE: z.string().optional().default(""),
+
+  /**
    * Par VAPID do Web Push. Opcionais: sem elas a bandeja só funciona com a aba
    * viva (Notification API + SW local). Gerar: `npx web-push generate-vapid-keys`.
    */

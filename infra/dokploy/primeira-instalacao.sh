@@ -1,6 +1,6 @@
 #!/bin/sh
 # Serviço `setup` do docker-compose.dokploy.yml. Roda a cada deploy, ANTES do
-# app, dentro de um contêiner postgres:17.6-alpine (psql + wget do busybox).
+# app, dentro de um contêiner postgres:17.6-alpine3.22 (psql + wget do busybox).
 #
 # Faz o que o hostgator-setup-kit/install.sh faz na instalação, na mesma ordem
 # e com as mesmas regras:
@@ -24,13 +24,56 @@ set -eu
 # depois da instalação ela pode sair do Environment do Dokploy.
 OWNER_PASSWORD="${OWNER_PASSWORD:-}"
 : "${NUVEMSHOP_OAUTH_ENCRYPTION_KEY:?NUVEMSHOP_OAUTH_ENCRYPTION_KEY ausente}"
-BASELINE="${BASELINE:-/baseline.sql}"
 LOCALE="${APP_LOCALE:-pt-BR}"
+# De onde vem o baseline.sql. O app, o worker e o scheduler rodam a imagem da
+# versão IMAGE_TAG; o arquivo montado do clone é o da PONTA da branch que o
+# Dokploy puxou — que pode estar à frente (ou atrás) da imagem. Schema de uma
+# versão com código de outra é o defeito que não aparece no deploy e aparece
+# na tela. Por isso o padrão é baixar o baseline da TAG v${IMAGE_TAG}:
+#   BASELINE_FONTE=versao (padrão) → baixa o da tag; se não conseguir, FALHA.
+#   BASELINE_FONTE=clone           → usa o arquivo montado (desenvolvimento e
+#                                    teste; nunca numa instalação de cliente).
+BASELINE_FONTE="${BASELINE_FONTE:-versao}"
+BASELINE_REPO="${BASELINE_REPO:-renoribeiro/DeskcommCRM-re9}"
 # Avisos de "já existe" viram ruído no log do Dokploy; erro de verdade continua aparecendo.
 export PGOPTIONS="${PGOPTIONS:-} -c client_min_messages=warning"
 
 log() { printf '[setup] %s\n' "$*"; }
 q() { psql "$DB_URL" -v ON_ERROR_STOP=1 -tAq "$@"; }
+
+# O log da aplicação do baseline e o arquivo baixado moram num diretório do
+# próprio processo (não em /tmp/baseline.log fixo).
+TRABALHO="$(mktemp -d)"
+trap 'rm -rf "$TRABALHO"' EXIT
+BASELINE_LOG="$TRABALHO/baseline.log"
+
+case "$BASELINE_FONTE" in
+  clone)
+    BASELINE="${BASELINE:-/baseline.sql}"
+    log "BASELINE_FONTE=clone: usando o baseline do clone ($BASELINE), não o da versão ${IMAGE_TAG:-?} — só para desenvolvimento e teste"
+    ;;
+  versao)
+    : "${IMAGE_TAG:?IMAGE_TAG ausente: o setup aplica o baseline da mesma versão das imagens}"
+    url="https://raw.githubusercontent.com/${BASELINE_REPO}/v${IMAGE_TAG}/supabase/baseline.sql"
+    BASELINE="$TRABALHO/baseline.sql"
+    log "baixando o schema da versão ${IMAGE_TAG}: $url"
+    if ! wget -q -T 60 -O "$BASELINE" "$url" 2>"$TRABALHO/wget.err"; then
+      log "NÃO consegui baixar o schema da versão ${IMAGE_TAG} ($(tail -1 "$TRABALHO/wget.err" 2>/dev/null))."
+      log "confira se a tag v${IMAGE_TAG} existe em https://github.com/${BASELINE_REPO}/tags e se a VPS alcança raw.githubusercontent.com; depois faça Deploy de novo."
+      log "o setup NÃO aplica o schema de outra versão no lugar: app e banco ficariam divergentes."
+      exit 1
+    fi
+    tamanho="$(wc -c < "$BASELINE" | tr -d ' ')"
+    if [ "${tamanho:-0}" -lt "${BASELINE_TAMANHO_MINIMO:-1000000}" ] || ! grep -qi 'create table' "$BASELINE"; then
+      log "o schema baixado da versão ${IMAGE_TAG} não parece um baseline (${tamanho:-0} bytes, sem 'create table') — recusado."
+      exit 1
+    fi
+    ;;
+  *)
+    log "BASELINE_FONTE='$BASELINE_FONTE' não existe: use 'versao' (padrão) ou 'clone'"
+    exit 1
+    ;;
+esac
 
 log "aguardando o banco…"
 i=0
@@ -49,17 +92,24 @@ done
 log "extensões (vector, citext, pg_trgm)"
 q -c "create extension if not exists vector with schema public; create extension if not exists citext with schema public; create extension if not exists pg_trgm with schema public;"
 
-# Erros que a reaplicação do baseline PRODUZ por ser idempotente — os mesmos do
-# kit (BASELINE_ERROS_BENIGNOS em hostgator-setup-kit/_common.sh).
+# Mesma régua do kit (hostgator-setup-kit/_common.sh), para o Dokploy tratar a
+# reaplicação como o update.sh trata:
+#  - BENIGNOS: o que a reaplicação PRODUZ por ser idempotente — igual a
+#    BASELINE_ERROS_BENIGNOS;
+#  - DISPUTA: banco ocupado ou conexão que caiu — aplicar de novo cura (o
+#    arquivo é idempotente). Igual a BASELINE_ERROS_DE_DISPUTA;
+#  - o resto é AVISO, como no update.sh ("o app pode ainda funcionar"), com uma
+#    exceção abaixo.
 BENIGNOS='already exists|multiple primary keys|multiple default values|is already a member|already a partition'
-# Disputa com quem está no ar ou conexão que caiu: aplicar de novo cura (o
-# arquivo é idempotente). Subconjunto de BASELINE_ERROS_DE_DISPUTA do kit.
-DISPUTA='deadlock detected|could not serialize access|lock timeout|could not obtain lock|terminating connection|server closed the connection|connection to server was lost|too many clients|remaining connection slots'
-# Erros que deixam o CRM sem pedaço do schema: bucket ou policy de `storage.`
-# que não nasceu (o storage ainda não tinha criado o schema dele), objeto que
-# não existe, ou o psql que não chegou ao fim do arquivo. Esses REPROVAM o
-# setup: seguir com o app no ar esconderia o defeito até alguém anexar um arquivo.
-FATAIS='storage\.|does not exist|o psql saiu com'
+DISPUTA='deadlock detected|could not serialize access|lock timeout|could not obtain lock|terminating connection|server closed the connection|connection to server was lost|SSL connection has been closed unexpectedly|SSL SYSCALL error|remaining connection slots|too many clients|max client(s| connections) reached|the database system is (starting up|shutting down|in recovery mode|not yet accepting connections)|Temporary failure in name resolution|Connection refused|Connection timed out|timeout expired|Network (is )?unreachable'
+# A exceção — o que é PRÓPRIO desta instalação e reprova o setup: aqui o
+# Supabase sobe junto, e o schema `storage` nasce das migrations do serviço
+# storage na partida dele. Se o baseline rodou antes, buckets e policies de
+# arquivo não existem e o defeito só aparece quando alguém anexa um arquivo —
+# o deploy de novo cura. E o psql que não chegou ao fim do arquivo. Um
+# "does not exist" genérico NÃO entra: o kit o tolera numa reaplicação, e
+# reprovar por ele travaria o redeploy de quem o kit deixaria atualizar.
+FATAIS='relation "storage\.|schema "storage" does not exist|storage\.|o psql saiu com'
 
 tem_schema="$(q -c "select 1 from information_schema.tables where table_schema='public' and table_name='organizations' limit 1")"
 if [ "$tem_schema" = "1" ]; then
@@ -67,12 +117,12 @@ if [ "$tem_schema" = "1" ]; then
   passada=1
   while :; do
     rc=0
-    psql "$DB_URL" -q -f "$BASELINE" >/tmp/baseline.log 2>&1 || rc=$?
-    inesperados="$(grep -iE 'ERROR|FATAL' /tmp/baseline.log | grep -viE "$BENIGNOS" || true)"
+    psql "$DB_URL" -q -f "$BASELINE" >"$BASELINE_LOG" 2>&1 || rc=$?
+    inesperados="$(grep -iE 'ERROR|FATAL' "$BASELINE_LOG" | grep -viE "$BENIGNOS" || true)"
     # Sem ON_ERROR_STOP o psql sai 0 mesmo com erro de SQL: saída diferente de
     # zero é o psql que NÃO chegou ao fim do arquivo.
     if [ "$rc" -ne 0 ]; then
-      inesperados="$(printf '%s\n%s' "$inesperados" "o psql saiu com código $rc: $(tail -1 /tmp/baseline.log)" | sed '/^$/d')"
+      inesperados="$(printf '%s\n%s' "$inesperados" "o psql saiu com código $rc: $(tail -1 "$BASELINE_LOG")" | sed '/^$/d')"
     fi
     [ -n "$inesperados" ] || break
     if [ "$passada" -lt 3 ] && printf '%s\n' "$inesperados" | grep -qiE "$DISPUTA"; then
@@ -90,13 +140,13 @@ if [ "$tem_schema" = "1" ]; then
       log "se algum cita 'storage.', o serviço storage ainda não tinha criado o schema dele: confira os Logs do storage e faça Deploy de novo"
       exit 1
     fi
-    log "erros não esperados no baseline (o CRM segue):"
+    log "AVISO: erros fora dos esperados no baseline — o CRM segue, como no update.sh do kit:"
     printf '%s\n' "$inesperados" | head -10
   fi
 else
   log "banco novo — aplicando o baseline (qualquer erro interrompe)"
-  psql "$DB_URL" -v ON_ERROR_STOP=1 -q -f "$BASELINE" >/tmp/baseline.log 2>&1 \
-    || { tail -20 /tmp/baseline.log; log "o baseline falhou num banco NOVO; o schema ficaria incompleto"; exit 1; }
+  psql "$DB_URL" -v ON_ERROR_STOP=1 -q -f "$BASELINE" >"$BASELINE_LOG" 2>&1 \
+    || { tail -20 "$BASELINE_LOG"; log "o baseline falhou num banco NOVO; o schema ficaria incompleto"; exit 1; }
 fi
 log "tabelas em public: $(q -c "select count(*) from information_schema.tables where table_schema='public'")"
 

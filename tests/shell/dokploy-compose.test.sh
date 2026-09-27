@@ -100,6 +100,7 @@ FIXAS = {
     "NODE_ENV": "é produção, sempre",
     "SUPABASE_DB_ADMIN_URL": "forçada vazia: a URL de admin é do kit com Supabase de fora",
     "INTERNAL_AGENT_RUN_STUB": "o trace falso do :test nunca vai para produção",
+    "DEPLOY_MODE": "é 'dokploy' por definição: este arquivo É a instalação pelo Dokploy, e as telas de /admin leem isso",
     "NEXT_PUBLIC_APP_URL": "deriva de DOMAIN", "NEXT_PUBLIC_ADMIN_URL": "deriva de DOMAIN",
     "NEXT_PUBLIC_SUPABASE_URL": "deriva de DOMAIN",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY": "vem de ANON_KEY (o nome do gerar-env)",
@@ -224,6 +225,8 @@ print(" ".join(r) or "ok")
 PY
 )"
   check "todo serviço interno tem apelido único imobcrm-* e nenhum endereço usa o nome cru" igual "$apelidos" ok
+  check "DEPLOY_MODE=dokploy chega a app e worker (as telas de /admin ensinam o Environment)" \
+    igual "$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1]))["services"]; print(s["app"]["environment"].get("DEPLOY_MODE"), s["worker"]["environment"].get("DEPLOY_MODE"))' "$WORK/cfg.json")" 'dokploy dokploy'
   check "o scheduler chama o app pelo apelido único" \
     igual "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["services"]["scheduler"]["environment"].get("SCHEDULER_APP_ORIGIN"))' "$WORK/cfg.json")" 'http://imobcrm-app:3000'
   gwcfg="$(python3 - "$WORK/cfg.json" <<'PY'
@@ -287,12 +290,19 @@ import json, re, sys
 st = json.load(open(sys.argv[1]))["services"]["setup"]
 d = st["depends_on"]
 r = [f"{k}={d[k]['condition']}" for k in ("db", "auth", "rest", "storage") if k in d]
-r.append("imagem-fixa" if re.fullmatch(r"postgres:\d+\.\d+-alpine", st["image"]) else "IMAGEM-MOVEL:" + st["image"])
+# Versão do Postgres E do Alpine: `17.6-alpine` sozinha é republicada a cada Alpine novo.
+r.append("imagem-fixa" if re.fullmatch(r"postgres:\d+\.\d+-alpine\d+\.\d+", st["image"]) else "IMAGEM-MOVEL:" + st["image"])
+e = st["environment"]
+r.append("baseline-da-versao" if e.get("IMAGE_TAG") == "1.57.0" and e.get("BASELINE_FONTE") == "versao" else f"BASELINE-FONTE:{e.get('IMAGE_TAG')}/{e.get('BASELINE_FONTE')}")
 print(" ".join(r))
 PY
 )"
-  check "setup depende de db, auth, rest e storage saudáveis; imagem com versão fixa" igual "$setup" \
-    'db=service_healthy auth=service_healthy rest=service_healthy storage=service_healthy imagem-fixa'
+  check "setup depende de db, auth, rest e storage saudáveis; imagem fixa; baseline da versão IMAGE_TAG" igual "$setup" \
+    'db=service_healthy auth=service_healthy rest=service_healthy storage=service_healthy imagem-fixa baseline-da-versao'
+  # Dependência upstream com tag fixa (packaging.md): `redis:7-alpine` flutua no major.
+  redis_img="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["services"]["redis"]["image"])' "$WORK/cfg.json")"
+  check "redis com versão completa (major.minor.patch-alpineX.Y), não tag que flutua" \
+    grep -qxE 'redis:[0-9]+\.[0-9]+\.[0-9]+-alpine[0-9]+\.[0-9]+' <<<"$redis_img"
 
   realtime_key="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["services"]["realtime"]["environment"]["DB_ENC_KEY"])' "$WORK/cfg.json")"
   check "o Realtime usa a chave gerada (D9), não a fixa" igual "$realtime_key" "$(sed -n 's/^REALTIME_DB_ENC_KEY=//p' "$WORK/.env")"
@@ -336,10 +346,123 @@ check "setup: o JSON do dono sai do json_build_object do Postgres (escape corret
   grep -q "json_build_object('email', :'email', 'password', :'senha'" "$SETUP"
 check "setup: senha só é exigida quando o dono não existe" \
   bash -c '! grep -q "OWNER_PASSWORD:?" "$1" && grep -q "OWNER_PASSWORD está vazia" "$1"' _ "$SETUP"
-check "setup: no modo atualização, erro que cita storage./does not exist reprova" \
-  grep -q "^FATAIS='storage\\\\.|does not exist|o psql saiu com'" "$SETUP"
 check "setup: tolera os mesmos erros benignos do kit" \
   bash -c 'b="$(sed -n "s/^BENIGNOS=//p" "$1" | tr -d "\x27")"; k="$(sed -n "s/^BASELINE_ERROS_BENIGNOS=//p" "$2" | tr -d "\x27")"; [ -n "$b" ] && [ "$b" = "$k" ]' _ "$SETUP" "$ROOT/hostgator-setup-kit/_common.sh"
+
+check "setup: tolera as mesmas disputas de conexão do kit (DISPUTA = BASELINE_ERROS_DE_DISPUTA)" \
+  bash -c 'b="$(sed -n "s/^DISPUTA=//p" "$1" | tr -d "\x27")"; k="$(sed -n "s/^BASELINE_ERROS_DE_DISPUTA=//p" "$2" | tr -d "\x27")"; [ -n "$b" ] && [ "$b" = "$k" ]' _ "$SETUP" "$ROOT/hostgator-setup-kit/_common.sh"
+
+echo "setup rodando DE VERDADE (psql, pg_isready e wget dublês):"
+# O script roda sob `sh` com dublês no PATH: o psql devolve a saída que o caso
+# pede e registra QUAL arquivo recebeu no -f; o wget serve o /health do Auth e
+# o baseline "da tag" (ou falha, quando o caso pede).
+FAKE="$WORK/fakebin"; mkdir -p "$FAKE"
+cat > "$FAKE/pg_isready" <<'SH'
+#!/bin/sh
+exit 0
+SH
+cat > "$FAKE/psql" <<'SH'
+#!/bin/sh
+arquivo=""; tem_c=0; todos="$*"
+while [ $# -gt 0 ]; do
+  case "$1" in -f) arquivo="$2"; shift ;; -c) tem_c=1 ;; esac
+  shift
+done
+if [ -n "$arquivo" ]; then
+  printf '%s %s\n' "$arquivo" "$(head -1 "$arquivo")" >> "$FAKE_REGISTRO"
+  [ -z "${FAKE_PSQL_SAIDA:-}" ] || printf '%s\n' "$FAKE_PSQL_SAIDA" >&2
+  exit "${FAKE_PSQL_RC:-0}"
+fi
+case "$todos" in
+  *"table_name='organizations'"*) echo "${FAKE_TEM_SCHEMA:-1}"; exit 0 ;;
+  *"count(*)"*) echo 200; exit 0 ;;
+esac
+[ "$tem_c" -eq 1 ] && exit 0
+entrada="$(cat)"
+case "$entrada" in *"from auth.users"*"limit 1"*) echo 1 ;; esac
+exit 0
+SH
+cat > "$FAKE/wget" <<'SH'
+#!/bin/sh
+saida=""; url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -O) saida="$2"; shift ;;
+    -T|--header|--post-data) shift ;;
+    -*) ;;
+    *) url="$1" ;;
+  esac
+  shift
+done
+printf '%s\n' "$url" >> "$FAKE_WGET_LOG"
+case "$url" in
+  */health) exit 0 ;;
+  *raw.githubusercontent.com*)
+    [ -n "${FAKE_BASELINE_REMOTO:-}" ] || { echo "wget: server returned error: HTTP/1.1 404 Not Found" >&2; exit 1; }
+    cp "$FAKE_BASELINE_REMOTO" "$saida"; exit 0 ;;
+esac
+exit 0
+SH
+chmod +x "$FAKE/pg_isready" "$FAKE/psql" "$FAKE/wget"
+{ echo '-- baseline DA TAG v1.57.0'; echo 'create table public.organizations (id uuid);'
+  head -c 1100000 /dev/zero | tr '\0' '-'; echo; } > "$WORK/baseline-da-tag.sql"
+printf '%s\n' '-- baseline DO CLONE' 'create table public.x (id int);' > "$WORK/baseline-do-clone.sql"
+printf '%s\n' '<html><body>404: Not Found</body></html>' > "$WORK/baseline-pagina.sql"
+
+# roda_setup <nome> [VAR=valor…]: roda o setup com os dublês; deixa a saída em
+# $WORK/<nome>.out, o código em $WORK/<nome>.rc e os -f em $WORK/<nome>.reg.
+roda_setup() {
+  local nome="$1"; shift
+  : > "$WORK/$nome.reg"; : > "$WORK/$nome.wget"
+  env -i PATH="$FAKE:$PATH" HOME="$HOME" \
+    DB_URL=postgresql://postgres:x@db:5432/postgres AUTH_URL=http://auth:9999 \
+    SERVICE_ROLE_KEY=srk OWNER_EMAIL=dono@exemplo.com NUVEMSHOP_OAUTH_ENCRYPTION_KEY=k \
+    IMAGE_TAG=1.57.0 BASELINE_ESPERA_S=0 FAKE_BASELINE_REMOTO="$WORK/baseline-da-tag.sql" \
+    FAKE_REGISTRO="$WORK/$nome.reg" FAKE_WGET_LOG="$WORK/$nome.wget" "$@" \
+    sh "$SETUP" > "$WORK/$nome.out" 2>&1
+  echo $? > "$WORK/$nome.rc"
+}
+rc_de() { cat "$WORK/$1.rc"; }
+
+# R9: só o que é do storage ou o psql que não chegou ao fim reprovam; o resto é
+# aviso, como no update.sh do kit.
+roda_setup benigno FAKE_PSQL_SAIDA='ERROR:  relation "crm_leads" already exists'
+check "update: só 'already exists' → segue sem aviso" \
+  bash -c '[ "$(cat "$1.rc")" = 0 ] && ! grep -q AVISO "$1.out" && grep -q "\[setup\] pronto" "$1.out"' _ "$WORK/benigno"
+roda_setup inexistente FAKE_PSQL_SAIDA='ERROR:  function public.fn_antiga(uuid) does not exist'
+check "update: 'does not exist' fora do storage → AVISO e segue (o kit tolera; não trava o redeploy)" \
+  bash -c '[ "$(cat "$1.rc")" = 0 ] && grep -q "AVISO" "$1.out" && grep -q "fn_antiga" "$1.out" && grep -q "\[setup\] pronto" "$1.out"' _ "$WORK/inexistente"
+roda_setup sem-bucket FAKE_PSQL_SAIDA='ERROR:  relation "storage.buckets" does not exist'
+check "update: relation \"storage.…\" does not exist → REPROVA e manda olhar o storage" \
+  bash -c '[ "$(cat "$1.rc")" != 0 ] && grep -q "NÃO se aplicou por inteiro" "$1.out" && grep -q "Logs do storage" "$1.out"' _ "$WORK/sem-bucket"
+roda_setup sem-schema FAKE_PSQL_SAIDA='ERROR:  schema "storage" does not exist'
+check "update: schema \"storage\" does not exist → REPROVA" \
+  bash -c '[ "$(cat "$1.rc")" != 0 ] && grep -q "NÃO se aplicou por inteiro" "$1.out"' _ "$WORK/sem-schema"
+roda_setup caiu FAKE_PSQL_SAIDA='psql: error: server closed the connection unexpectedly' FAKE_PSQL_RC=2
+check "update: psql que não chega ao fim → tenta 3 vezes e REPROVA" \
+  bash -c '[ "$(cat "$1.rc")" != 0 ] && [ "$(wc -l < "$1.reg")" -eq 3 ] && grep -q "o psql saiu com código 2" "$1.out"' _ "$WORK/caiu"
+
+# R10: o schema aplicado é o da versão das imagens, não o da ponta do clone.
+roda_setup da-tag
+check "o baseline aplicado é o baixado da tag v\${IMAGE_TAG}, não o do clone" \
+  bash -c '[ "$(cat "$1.rc")" = 0 ] && grep -q "baseline DA TAG" "$1.reg" && ! grep -q "^/baseline.sql" "$1.reg"' _ "$WORK/da-tag"
+check "…baixado de raw.githubusercontent.com/renoribeiro/DeskcommCRM-re9/v1.57.0/supabase/baseline.sql" \
+  grep -qx 'https://raw.githubusercontent.com/renoribeiro/DeskcommCRM-re9/v1.57.0/supabase/baseline.sql' "$WORK/da-tag.wget"
+roda_setup tag-ausente FAKE_BASELINE_REMOTO=
+check "download que falha → REPROVA com a tag no texto, sem aplicar schema nenhum" \
+  bash -c '[ "$(cat "$1.rc")" != 0 ] && grep -q "v1.57.0" "$1.out" && grep -q "NÃO aplica o schema de outra versão" "$1.out" && [ ! -s "$1.reg" ]' _ "$WORK/tag-ausente"
+roda_setup pagina FAKE_BASELINE_REMOTO="$WORK/baseline-pagina.sql"
+check "download que devolve outra coisa (página de erro, arquivo curto) → REPROVA" \
+  bash -c '[ "$(cat "$1.rc")" != 0 ] && grep -q "não parece um baseline" "$1.out" && [ ! -s "$1.reg" ]' _ "$WORK/pagina"
+roda_setup sem-tag IMAGE_TAG=
+check "sem IMAGE_TAG (modo padrão) → REPROVA antes de tocar no banco" \
+  bash -c '[ "$(cat "$1.rc")" != 0 ] && grep -q "IMAGE_TAG" "$1.out" && [ ! -s "$1.reg" ]' _ "$WORK/sem-tag"
+roda_setup clone BASELINE_FONTE=clone BASELINE="$WORK/baseline-do-clone.sql" FAKE_BASELINE_REMOTO=
+check "BASELINE_FONTE=clone usa o arquivo montado, sem baixar nada" \
+  bash -c '[ "$(cat "$1.rc")" = 0 ] && grep -q "baseline DO CLONE" "$1.reg" && ! grep -q raw.githubusercontent "$1.wget"' _ "$WORK/clone"
+roda_setup fonte-errada BASELINE_FONTE=main
+check "BASELINE_FONTE desconhecida → REPROVA" \
+  bash -c '[ "$(cat "$1.rc")" != 0 ] && grep -q "BASELINE_FONTE=.main. não existe" "$1.out"' _ "$WORK/fonte-errada"
 
 [ "$FAILS" -eq 0 ] || { echo "✖ $FAILS falha(s)" >&2; exit 1; }
 echo 'ok: o compose do Dokploy resolve, publica só o necessário, usa nomes únicos e o gerador produz chaves válidas'

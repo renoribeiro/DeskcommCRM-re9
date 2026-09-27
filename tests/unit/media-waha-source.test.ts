@@ -22,11 +22,11 @@ describe("fetchWahaMedia", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const media = await fetchWahaMedia(`${WAHA_BASE}/api/files/abc.jpg`);
+    const media = await fetchWahaMedia(`${WAHA_BASE}/api/files/sessao/abc.jpg`, null, "sessao");
     expect(media.mime).toBe("image/jpeg");
     expect(media.buffer.byteLength).toBe(3);
     expect(fetchMock).toHaveBeenCalledWith(
-      `${WAHA_BASE}/api/files/abc.jpg`,
+      `${WAHA_BASE}/api/files/sessao/abc.jpg`,
       expect.objectContaining({ headers: { "X-Api-Key": "hash123" } }),
     );
   });
@@ -39,9 +39,9 @@ describe("fetchWahaMedia", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    await fetchWahaMedia("http://evil.example.com/api/files/x.jpg?q=1");
+    await fetchWahaMedia("http://evil.example.com/api/files/sessao/x.jpg?q=1", null, "sessao");
     // A query também cai (auditoria P1): arquivo do WAHA não precisa dela.
-    expect(fetchMock).toHaveBeenCalledWith(`${WAHA_BASE}/api/files/x.jpg`, expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith(`${WAHA_BASE}/api/files/sessao/x.jpg`, expect.anything());
   });
 
   it("reescreve a porta interna anunciada pelo WAHA p/ a base real", async () => {
@@ -53,7 +53,7 @@ describe("fetchWahaMedia", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    await fetchWahaMedia("http://localhost:3000/api/files/sessao/sticker.webp");
+    await fetchWahaMedia("http://localhost:3000/api/files/sessao/sticker.webp", null, "sessao");
     expect(fetchMock).toHaveBeenCalledWith(
       `${WAHA_BASE}/api/files/sessao/sticker.webp`,
       expect.anything(),
@@ -62,7 +62,7 @@ describe("fetchWahaMedia", () => {
 
   it("propaga status HTTP de erro", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
-    await expect(fetchWahaMedia(`${WAHA_BASE}/api/files/gone.jpg`)).rejects.toThrow(
+    await expect(fetchWahaMedia(`${WAHA_BASE}/api/files/sessao/gone.jpg`, null, "sessao")).rejects.toThrow(
       "waha_media_404",
     );
   });
@@ -77,7 +77,7 @@ describe("fetchWahaMedia", () => {
         }),
       ),
     );
-    await expect(fetchWahaMedia(`${WAHA_BASE}/api/files/big.mp4`)).rejects.toThrow(
+    await expect(fetchWahaMedia(`${WAHA_BASE}/api/files/sessao/big.mp4`, null, "sessao")).rejects.toThrow(
       MediaTooLargeError,
     );
   });
@@ -87,7 +87,7 @@ describe("fetchWahaMedia", () => {
       "fetch",
       vi.fn().mockResolvedValue(new Response(new ArrayBuffer(2), { status: 200 })),
     );
-    const media = await fetchWahaMedia(`${WAHA_BASE}/api/files/x`, "audio/ogg; codecs=opus");
+    const media = await fetchWahaMedia(`${WAHA_BASE}/api/files/sessao/x`, "audio/ogg; codecs=opus", "sessao");
     expect(media.mime).toBe("audio/ogg; codecs=opus");
   });
 
@@ -112,6 +112,8 @@ describe("fetchWahaMedia", () => {
       ["segmento vazio", "http://localhost:3000/api/files//x.jpg"],
       ["esquema não-http", "file:///api/files/x.jpg"],
       ["sessão de outra organização", "http://localhost:3000/api/files/outra/ABC.bin"],
+      // R11: sem o segmento da sessão não há como conferir a organização.
+      ["arquivo sem a sessão no caminho", "http://localhost:3000/api/files/ABC.bin"],
     ] as const;
 
     for (const [rotulo, url] of RECUSADAS) {
@@ -129,6 +131,12 @@ describe("fetchWahaMedia", () => {
       expect(
         caminhoDeArquivoDoWaha("http://localhost:3000/api/files/sessao/false_5511@c.us_3EB0.jpeg", "sessao"),
       ).toBe("/api/files/sessao/false_5511@c.us_3EB0.jpeg");
+    });
+
+    it("sem sessionRef não há com o que conferir: recusa até o formato real (R11)", () => {
+      expect(caminhoDeArquivoDoWaha("http://localhost:3000/api/files/sessao/a.jpg")).toBeNull();
+      expect(caminhoDeArquivoDoWaha("http://localhost:3000/api/files/sessao/a.jpg", "")).toBeNull();
+      expect(caminhoDeArquivoDoWaha("http://localhost:3000/api/files/a.jpg", "sessao")).toBeNull();
     });
 
     it("não segue redirect com a X-Api-Key", async () => {
