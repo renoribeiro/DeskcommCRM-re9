@@ -1,0 +1,8 @@
+---
+impacto: capacidade_nova
+secao: corrigido
+titulo: Instalação pelo Dokploy mais segura, com versão fixa, limites de memória e backup
+---
+A instalação pelo painel do Dokploy (`docker-compose.dokploy.yml`) passou pela auditoria de segurança. O gerador de variáveis agora exige o número da versão e ensina a listar as publicadas; o arquivo não cai mais numa tag que pode nem existir. Todo endereço interno usa um nome único (`imobcrm-*`), para que outro sistema na rede compartilhada do Dokploy não receba a senha do banco nem o tráfego de login, e o gateway do Supabase é reescrito para esses nomes na partida. O preparo do banco espera o Storage ficar pronto e para, com a causa no log, quando uma atualização deixaria o banco incompleto. Todo serviço tem teto de memória e o Postgres foi ajustado para uma VPS de 8 GB. A chave do Realtime passa a ser gerada por instalação, a API do banco deixa de expor o schema de arquivos, o JSON do primeiro administrador sai escapado e a senha dele só é pedida enquanto ele não existe. Qualquer variável do CRM (Web Push, Resend, Google Agenda, e-mail de suporte, DPO, retenções) pode ser ligada pelo Environment. E há um backup completo, `infra/dokploy/backup.sh` (banco, arquivos e sessões do WhatsApp, cada peça conferida), com a restauração no runbook.
+
+A instalação pelo Dokploy ainda não saiu em versão publicada, então quem instalar a partir desta versão não precisa fazer nada: o `gerar-env.sh` já produz tudo. Quem subiu antes, direto da `main`, acrescenta `REALTIME_DB_ENC_KEY=supabaserealtime` no Environment antes do próximo Deploy (é a chave que o Realtime já usa; trocá-la por outra o quebra) e confere que `IMAGE_TAG` é um número de versão; sem isso o Deploy é recusado com a explicação.

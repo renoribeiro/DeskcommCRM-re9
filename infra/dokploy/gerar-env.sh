@@ -2,7 +2,7 @@
 # Gera as variáveis de ambiente do `docker-compose.dokploy.yml` (ImobCRM/DeskcommCRM
 # com o Supabase na mesma VPS, publicado pelo Traefik do Dokploy).
 #
-#   bash infra/dokploy/gerar-env.sh --dominio crm.suaempresa.com.br --email voce@suaempresa.com.br
+#   bash infra/dokploy/gerar-env.sh --dominio crm.suaempresa.com.br --email voce@suaempresa.com.br --versao 1.57.0
 #
 # A saída é o bloco para colar em Dokploy › (seu Compose) › Environment. Tudo é
 # gerado AQUI, localmente, com openssl: nenhum segredo sai desta máquina.
@@ -17,17 +17,32 @@ set -euo pipefail
 
 dominio=""
 email=""
-versao="stable"
+versao=""
 nome="ImobCRM"
 
 uso() {
   cat <<'EOF'
-Uso: bash infra/dokploy/gerar-env.sh --dominio DOMINIO --email EMAIL [--versao X.Y.Z] [--nome NOME]
+Uso: bash infra/dokploy/gerar-env.sh --dominio DOMINIO --email EMAIL --versao X.Y.Z [--nome NOME]
 
   --dominio   domínio do CRM, sem https:// (ex.: crm.suaempresa.com.br)
   --email     e-mail do primeiro administrador
-  --versao    versão das imagens (padrão: stable). Prefira um número (ex.: 1.57.0)
+  --versao    OBRIGATÓRIA: número de uma versão PUBLICADA das imagens (ex.: 1.57.0)
   --nome      nome da marca semeado na instalação (padrão: ImobCRM)
+EOF
+}
+
+# Onde ver as versões publicadas. `stable`/`latest` não servem: são tags que
+# MOVEM (e `stable` pode nem existir no registro do fork — o primeiro deploy
+# falharia no download da imagem).
+como_ver_versoes() {
+  cat <<'EOF'
+Para ver as versões publicadas:
+  git ls-remote --tags https://github.com/renoribeiro/DeskcommCRM-re9 'v*'
+    (a tag v1.57.0 vira a imagem 1.57.0 — use o número sem o "v")
+  ou a página do pacote no GitHub:
+    https://github.com/renoribeiro/DeskcommCRM-re9/pkgs/container/deskcommcrm
+Confira que a versão aparece lá antes do Deploy: tag sem imagem publicada
+falha no download.
 EOF
 }
 
@@ -47,9 +62,18 @@ dominio="$(printf '%s' "$dominio" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:
 dominio="${dominio#https://}"; dominio="${dominio#http://}"; dominio="${dominio%%/*}"
 [[ "$dominio" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] \
   || { echo "Domínio inválido: '$dominio'. Informe só o host (ex.: crm.suaempresa.com.br)." >&2; exit 2; }
-[[ "$email" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] \
+# Sem aspas, barra invertida, crase, cifrão, `<`, `>`, `;` nem `=`: o e-mail vai
+# para o Environment do Dokploy e para o JSON do primeiro administrador.
+re_email='^[^]@[:space:]"'"'"'\\`$<>;=[]+@[^]@[:space:]"'"'"'\\`$<>;=[]+\.[^]@[:space:]"'"'"'\\`$<>;=[]+$'
+[[ "$email" =~ $re_email ]] \
   || { echo "E-mail inválido: '$email'." >&2; exit 2; }
-[[ "$versao" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Versão inválida: '$versao'." >&2; exit 2; }
+if [ -z "$versao" ]; then
+  { echo "Falta --versao: a instalação aponta para um NÚMERO de versão publicado, nunca para stable/latest."; como_ver_versoes; } >&2
+  exit 2
+fi
+versao="${versao#v}"
+[[ "$versao" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] \
+  || { { echo "Versão inválida: '$versao'. Use o número de uma versão publicada (ex.: 1.57.0), nunca uma tag que move (stable, latest, main)."; como_ver_versoes; } >&2; exit 2; }
 [[ "$nome" =~ ^[^\"\$\`\\]+$ ]] || { echo "Nome inválido: '$nome'." >&2; exit 2; }
 command -v openssl >/dev/null 2>&1 || { echo "openssl não encontrado." >&2; exit 1; }
 
@@ -89,7 +113,7 @@ APP_LOCALE=pt-BR
 SIGNUP_MODE=so_convite
 DISABLE_SIGNUP=true
 
-# Versão das imagens (número fixo é o recomendado)
+# Versão das imagens: número fixo, sempre. Para atualizar, troque aqui e faça Deploy.
 IMAGE_TAG=${versao}
 
 # Traefik do Dokploy (os nomes padrão do Dokploy)
@@ -104,6 +128,8 @@ JWT_SECRET=${jwt_secret}
 ANON_KEY=$(jwt anon "$jwt_secret")
 SERVICE_ROLE_KEY=$(jwt service_role "$jwt_secret")
 SECRET_KEY_BASE=$(hex 32)
+# Chave com que o Realtime cifra a senha do banco que ele guarda (16 caracteres).
+REALTIME_DB_ENC_KEY=$(hex 8)
 DASHBOARD_USERNAME=supabase
 DASHBOARD_PASSWORD=$(hex 16)
 
