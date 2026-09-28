@@ -25,11 +25,9 @@ export const logger = {
     console.log(fmt("info", msg, ctx));
   },
   warn(msg: string, ctx?: LogContext): void {
-    // eslint-disable-next-line no-console
     console.warn(fmt("warn", msg, ctx));
   },
   error(msg: string, ctx?: LogContext): void {
-    // eslint-disable-next-line no-console
     console.error(fmt("error", msg, ctx));
   },
   debug(msg: string, ctx?: LogContext): void {

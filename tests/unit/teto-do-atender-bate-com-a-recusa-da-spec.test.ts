@@ -4,8 +4,8 @@
  * ## O defeito que este teste encurta
  *
  * O caso de recusa de `tests/e2e/capacidades-do-agente.spec.ts` clica em
- * "Atender" e espera `/faltam? 1 vaga/`. A aritmética é o seed da spec (9,
- * todas FORA do pacote) somado às 17 do pacote: 26 contra o teto de 25. Quando
+ * "Atender" e espera `/faltam? 1 vaga/`. A aritmética é o seed da spec (hoje 10,
+ * todas FORA do pacote) somado às 16 do pacote: 26 contra o teto de 25. Quando
  * uma ferramenta nova entra em `atender` — a #1684 fez exatamente isso — a
  * recusa na tela vira "faltam 2 vagas" e quem repara é o e2e, uns 20 minutos
  * depois, longe da mudança que causou o problema.
@@ -32,6 +32,31 @@ import {
 } from "@/lib/mcp/tools/selecao-por-pacote";
 
 const SPEC_DA_E2E = join(process.cwd(), "tests/e2e/capacidades-do-agente.spec.ts");
+const SCRIPT_DO_SEED = join(process.cwd(), "scripts/seed-e2e-capacidades.ts");
+
+/** As entradas `"crm_...",` de um array literal, ignorando os comentários. */
+function entradasDoBloco(bloco: string): string[] {
+  return [...bloco.matchAll(/^\s*"([^"]+)",?\s*$/gm)].map((m) => m[1]!);
+}
+
+/**
+ * O que o SCRIPT de seed de fato grava no agente (`TOOLS_LIGADAS`). A spec
+ * DESCREVE o cenário; é o script que o monta no banco. As duas listas andavam
+ * separadas: a auditoria A1 acrescentou a décima ferramenta à spec e não ao
+ * script — o banco recebia 9, o pacote cabia (9 + 16 = 25), a recusa sumia na
+ * tela e três casos da e2e caíam em cascata, com esta conta aqui verde.
+ */
+function toolsGravadasPeloScriptDoSeed(): string[] {
+  const texto = readFileSync(SCRIPT_DO_SEED, "utf8");
+  const bloco = texto.match(/const TOOLS_LIGADAS = \[([\s\S]*?)\];/);
+  if (!bloco?.[1]) {
+    throw new Error(
+      "const TOOLS_LIGADAS não existe mais em scripts/seed-e2e-capacidades.ts. " +
+        "Este teste compara o que o script grava com o que a spec supõe — atualize os dois juntos.",
+    );
+  }
+  return entradasDoBloco(bloco[1]);
+}
 
 /**
  * O seed lido do ARQUIVO, não importado: a spec roda `loadCreds()` no corpo do
@@ -50,7 +75,7 @@ function toolsDoSeedDaSpec(): string[] {
   }
   // Só as entradas `"crm_...",` em linha própria; os comentários dentro do
   // bloco começam com `//` e não casam.
-  return [...bloco[1].matchAll(/^\s*"([^"]+)",?\s*$/gm)].map((m) => m[1]!);
+  return entradasDoBloco(bloco[1]);
 }
 
 /**
@@ -81,6 +106,15 @@ describe("ligar Atender com o seed da spec excede o teto em exatamente uma vaga"
     expect(EM_ATENDER.length, "o pacote 'atender' sumiu do catálogo").toBeGreaterThan(0);
   });
 
+  it("o script de seed grava EXATAMENTE a lista que a spec supõe, na mesma ordem", () => {
+    // A ordem conta: o caso do teto desliga `TOOLS_DO_SEED[2]` para liberar uma vaga.
+    expect(
+      toolsGravadasPeloScriptDoSeed(),
+      "scripts/seed-e2e-capacidades.ts (TOOLS_LIGADAS) e a spec (TOOLS_DO_SEED) divergiram: " +
+        "a conta abaixo mede a spec, mas quem monta o banco da e2e é o script",
+    ).toEqual(SEED);
+  });
+
   it("cada ferramenta do seed existe no catálogo", () => {
     const nomes = new Set(CATALOGO_DA_TELA.map((c) => c.name));
     for (const ferramenta of SEED) {
@@ -93,7 +127,7 @@ describe("ligar Atender com o seed da spec excede o teto em exatamente uma vaga"
 
   it("nenhuma ferramenta do seed está DENTRO de Atender", () => {
     // Se uma entrasse, a união seria menor que a soma e a aritmética da spec
-    // (9 + 17) deixaria de descrever o que a tela faz ao clicar.
+    // (seed + pacote) deixaria de descrever o que a tela faz ao clicar.
     for (const ferramenta of SEED) {
       expect(
         EM_ATENDER.includes(ferramenta),

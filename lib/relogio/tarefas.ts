@@ -32,9 +32,16 @@ export type IdDeTarefaDoRelogio = (typeof TAREFAS_DO_RELOGIO)[number]["id"];
 
 export const CAMINHO_DO_TICK = "/api/v1/system/relogio/tick";
 
+/**
+ * O curl que o runbook manda colar num serviço de TERCEIROS. Usa
+ * `INTERNAL_CRON_SECRET`, nunca `INTERNAL_SECRET` (auditoria P7): o segundo
+ * também deriva a chave do `state` dos OAuth, e um segredo cadastrado fora da
+ * instalação deve ser o que só serve para bater nos crons. O tick aceita os
+ * dois (`app/api/v1/system/relogio/tick/route.ts`).
+ */
 export function comandoCurlDoRelogio(appUrl: string): string {
   const base = appUrl.replace(/\/$/, "");
-  return `curl -fsS -X POST -H "Authorization: Bearer $INTERNAL_SECRET" "${base}${CAMINHO_DO_TICK}"`;
+  return `curl -fsS -X POST -H "Authorization: Bearer $INTERNAL_CRON_SECRET" "${base}${CAMINHO_DO_TICK}"`;
 }
 
 /** URL absoluta do tick — para colar em cron-job.org / GitHub Actions. */

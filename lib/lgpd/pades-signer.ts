@@ -4,8 +4,11 @@
  * MVP: real PAdES requires P12 cert provisioning that's still pending. When
  * `LGPD_SIGNING_KEY` is unset, we render the PDF with an "unsigned" warning
  * banner (caller already does that), compute SHA-256 over the buffer for
- * integrity logging, and surface a `signed_pades=false` + `warning='pades_key_missing'`
- * flag so downstream audit captures the gap.
+ * integrity logging, and surface a `signed_pades=false` + `warning` flag so
+ * downstream audit captures the gap. The warning names the REAL cause:
+ * `pades_key_missing` when the key is absent, `pades_not_implemented` when the
+ * key exists but the signing itself was never wired — reporting "key missing"
+ * to an operator who configured the key sends them to fix the wrong thing.
  *
  * When the key + cert are wired in, swap `signPdfPades` to use
  * `node-signpdf` + `@signpdf/signer-p12` (interface stays identical).
@@ -17,7 +20,18 @@ export interface SignResult {
   signed: Buffer;
   sha256: string;
   signed_pades: boolean;
-  warning?: "pades_key_missing";
+  warning?: "pades_key_missing" | "pades_not_implemented";
+}
+
+/**
+ * O signatário PAdES real ainda não existe. Enquanto isto for `false`, NENHUM
+ * PDF pode sair sem a faixa de "não assinado" — nem com a chave configurada.
+ */
+export const PADES_IMPLEMENTADO = false;
+
+/** O PDF desta instalação sai de fato assinado? Decide a faixa de aviso. */
+export function padesAssinaDeVerdade(): boolean {
+  return PADES_IMPLEMENTADO && isPadesConfigured();
 }
 
 export function isPadesConfigured(): boolean {
@@ -52,6 +66,6 @@ export async function signPdfPades(buffer: Buffer): Promise<SignResult> {
     signed: buffer,
     sha256: sha256Hex(buffer),
     signed_pades: false,
-    warning: "pades_key_missing",
+    warning: "pades_not_implemented",
   };
 }

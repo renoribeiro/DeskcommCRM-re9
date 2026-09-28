@@ -32,6 +32,8 @@ export function RecoveryForm({ next }: RecoveryFormProps) {
       if (!res) return; // server-side redirect on success
       if (res.error === "service_unavailable") {
         setError(t("Serviço de recuperação indisponível. Contate o administrador."));
+      } else if (res.error === "rate_limited") {
+        setError(t("Muitas tentativas. Aguarde alguns minutos."));
       } else {
         setError(t("Código inválido ou já utilizado."));
       }

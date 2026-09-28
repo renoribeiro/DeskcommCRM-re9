@@ -150,6 +150,14 @@ export async function listConversationsHandler(
   supabase: SB,
   ctx: HandlerCtx,
   q: ListConversationsQuery,
+  /**
+   * Recorte que não é filtro da tela nem do contrato HTTP: o contato do turno,
+   * quando quem lista é o agente no atendimento (`lib/mcp/tools/conversations.ts`).
+   * Vai no banco, e não em memória, pelo mesmo motivo dos demais filtros: filtrar
+   * depois de paginar devolvia lista vazia quando a conversa do cliente não
+   * estava entre as mais recentes da organização.
+   */
+  recorte?: { contact_id?: string },
 ): Promise<ListConversationsResult> {
   // Fila: ordena por TEMPO DE ESPERA — quem espera há mais tempo primeiro. A
   // régua é `awaiting_since` = a mensagem do cliente MAIS ANTIGA sem resposta
@@ -197,6 +205,7 @@ export async function listConversationsHandler(
     query = query.not("status", "in", `(${CONVERSATION_TERMINAL_STATUSES.join(",")})`);
   }
   if (q.channel_session_id) query = query.eq("channel_session_id", q.channel_session_id);
+  if (recorte?.contact_id) query = query.eq("contact_id", recorte.contact_id);
   // ⚠️ O MARCADOR FILTRADO É O DA CONVERSA **OU** O DO CONTATO.
   //
   // Era só `conversations.tags`, e o relato mede o buraco: *"adicionei a tag nele

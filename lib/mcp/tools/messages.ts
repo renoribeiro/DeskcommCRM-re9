@@ -19,8 +19,16 @@ const ENDPOINT_TAG = "mcp:crm_send_whatsapp_message";
 const inputShape = {
   conversation_id: z.string().uuid(),
   body: z.string().min(1).max(4096).optional(),
-  media_url: z.string().url().optional(),
-  media_mime: z.string().optional(),
+  // Mídia só pelo NOSSO Storage (auditoria P1): o arquivo sobe em
+  // POST /api/v1/conversations/{id}/media e o caminho devolvido vem aqui. URL
+  // arbitrária não é aceita — virava proxy autenticado para a API do canal.
+  media_storage_path: z
+    .string()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe("Caminho devolvido por POST /api/v1/conversations/{id}/media. URL externa não é aceita."),
+  media_mime: z.string().max(255).optional(),
   type: z
     .enum(["text", "image", "audio", "document", "sticker", "video", "location", "contact"])
     .optional()
@@ -50,14 +58,14 @@ export const crmSendWhatsappMessage: McpToolDefinition<typeof inputShape> = {
       conversation_id: input.conversation_id,
       type: input.type,
       body: input.body,
-      media_url: input.media_url,
+      media_storage_path: input.media_storage_path,
       media_mime: input.media_mime,
     });
 
     const requestHash = hashRequest({
       conversation_id: parsed.conversation_id,
       body: parsed.body,
-      media_url: parsed.media_url,
+      media_storage_path: parsed.media_storage_path,
       type: parsed.type,
     });
 

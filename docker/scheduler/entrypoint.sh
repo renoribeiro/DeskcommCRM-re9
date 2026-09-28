@@ -18,22 +18,35 @@ if [ -z "${INTERNAL_SECRET:-}" ]; then
   exit 1
 fi
 
-# Constante, não configuração: `app` é o nome do serviço na rede interna do
-# compose, e o scheduler não fala com mais nada. A primeira versão disto lia um
-# `SCHEDULER_APP_ORIGIN` que o compose nunca repassava e nenhum template
-# documentava — controle decorativo, que é pior que controle nenhum: quem o
-# encontrasse no código o definiria no `.env` e não veria efeito.
-APP_ORIGIN="http://app:3000"
+# A origem do app na rede interna do compose. O padrão é `http://app:3000`, o
+# nome do serviço, e é o que o kit usa. `SCHEDULER_APP_ORIGIN` existe para o
+# `docker-compose.dokploy.yml`, que a REPASSA (http://imobcrm-app:3000): lá o
+# app também está na rede compartilhada do Traefik, onde `app` pode ser o
+# contêiner de outro sistema, e cada serviço ganha um nome único. (A primeira
+# versão disto lia uma variável que nenhum compose repassava — controle
+# decorativo. Agora há quem a repasse, e o teste do compose do Dokploy cobra.)
+#
+# A origem entra no crontab entre aspas DUPLAS, que o `sh -c` do crond
+# reavalia: por isso só passa esquema + host + porta, sem `$`, crase ou aspas.
+APP_ORIGIN="${SCHEDULER_APP_ORIGIN:-http://app:3000}"
+if ! printf '%s' "$APP_ORIGIN" | grep -Eq '^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$'; then
+  echo "scheduler: SCHEDULER_APP_ORIGIN inválida ('$APP_ORIGIN') — use só esquema, host e porta (ex.: http://app:3000)." >&2
+  exit 1
+fi
 
-# O crond executa cada linha por `/bin/sh -c`, então o segredo é REAVALIADO pelo
-# shell na hora de disparar. Interpolá-lo cru dentro de aspas duplas fazia com
-# que um `$` no valor virasse expansão de variável (o header sairia truncado, e
-# todo cron responderia 401 em silêncio) e uma crase virasse substituição de
-# comando — execução arbitrária a cada minuto. Medido com um segredo hostil: a
-# versão com aspas duplas entregava `segrafaelmelgacoredo/Users/rafaelmelgaco…`,
-# com o `whoami` EXECUTADO. Aqui o valor vai entre aspas SIMPLES, com as aspas
-# simples internas escapadas — dentro delas o sh não interpreta nada.
-SEGREDO_SEGURO="$(printf '%s' "$INTERNAL_SECRET" | sed "s/'/'\\\\''/g")"
+# O SEGREDO NÃO VAI NA LINHA DE COMANDO. Ia: `curl -H 'Authorization: Bearer …'`
+# deixava o valor em `/proc/<pid>/cmdline` a cada disparo — visível no `ps` do
+# host (`docker top`, `ps aux` na VPS) por qualquer usuário, e gravado no
+# próprio crontab. Agora o header mora num arquivo só do root (0600, diretório
+# 0700) e o curl o lê com `-H @arquivo`. De quebra, o valor não passa mais pelo
+# `/bin/sh -c` do crond: `$`, crase e aspas no segredo não têm como virar
+# expansão nem comando, porque o shell nunca o vê.
+#
+# CRON_HEADER_DIR é ponto de injeção do teste, como o CRONTAB_PATH abaixo. É um
+# diretório DEDICADO: o script fecha a permissão dele (0700), então nunca aponte
+# para um diretório compartilhado.
+DIR_DO_CABECALHO="${CRON_HEADER_DIR:-/etc/deskcomm}"
+CABECALHO="$DIR_DO_CABECALHO/cron-header"
 
 # minuto|timeout|caminho — uma linha por cron. O caminho vai COMPLETO de
 # propósito: o literal `api/v1/cron/<rota>` é o contrato que
@@ -127,11 +140,21 @@ CRONS="
 DESTINO="${CRONTAB_PATH:-/etc/crontabs/root}"
 
 umask 077
+mkdir -p "$DIR_DO_CABECALHO"
+chmod 700 "$DIR_DO_CABECALHO"
+printf 'Authorization: Bearer %s\n' "$INTERNAL_SECRET" > "$CABECALHO"
+chmod 600 "$CABECALHO"
+
+# O caminho do arquivo vai entre aspas SIMPLES no crontab (com as internas
+# escapadas): ele é reavaliado pelo sh do crond, e um caminho de teste com
+# espaço não pode quebrar a linha.
+CABECALHO_SEGURO="$(printf '%s' "$CABECALHO" | sed "s/'/'\\\\''/g")"
+
 : > "$DESTINO"
 echo "$CRONS" | while IFS='|' read -r quando timeout rota; do
   [ -n "$rota" ] || continue
-  printf '%s curl -fsS -m%s -H '"'"'Authorization: Bearer %s'"'"' "%s/%s" >/dev/null 2>&1\n' \
-    "$quando" "$timeout" "$SEGREDO_SEGURO" "$APP_ORIGIN" "$rota" >> "$DESTINO"
+  printf '%s curl -fsS -m%s -H '"'"'@%s'"'"' "%s/%s" >/dev/null 2>&1\n' \
+    "$quando" "$timeout" "$CABECALHO_SEGURO" "$APP_ORIGIN" "$rota" >> "$DESTINO"
 done
 
 exec crond -f -l 2

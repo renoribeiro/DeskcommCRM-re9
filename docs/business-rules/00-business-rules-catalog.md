@@ -130,8 +130,10 @@ owner: Rafael Melgaço
 ### L-07 — CPF criptografado at-rest
 - **Origem**: Sub-PRD 02 §3.1 (Risco C7)
 - **Tipo**: Hard constraint
-- **Regra**: GIVEN contact com CPF; WHEN persistido; THEN coluna usa `pgcrypto` com chave separada `CPF_ENCRYPTION_KEY` (env-only, rotação trimestral).
-- **Enforcement**: DB (coluna `cpf_encrypted bytea`; função `decrypt_cpf()` com check de role).
+- **Regra**: GIVEN contact com CPF; WHEN persistido; THEN `cpf_encrypted` recebe o CPF normalizado cifrado com **AES-256-GCM no servidor Node** e `cpf_hash` recebe o **HMAC-SHA256** do mesmo valor — as duas chaves derivadas por **HKDF-SHA256** da `CPF_ENCRYPTION_KEY` (env-only), com rótulos distintos (separação de domínio: vazar a chave de busca não entrega a de cifra). Sem chave válida, nenhuma escrita de CPF acontece (503 `cpf_encryption_unavailable`).
+- **Enforcement**: servidor (`lib/contacts/cpf.ts`: `colunasDoCpf`, `hashCpf`, `decryptCpf`), mais o CHECK `contacts_cpf_consistency` no banco (as duas colunas nulas ou as duas preenchidas). O banco NÃO cifra nem decifra: não existe `decrypt_cpf()` nem `pgcrypto` neste caminho. A leitura em claro só acontece em `GET /api/v1/contacts/[id]` com `decrypt_purpose`, para papel `manager` ou acima, e é auditada.
+- **Formato do blob**: `0x01 ‖ iv(12) ‖ tag(16) ‖ cifra`. O primeiro byte é a VERSÃO do esquema, não um identificador de chave.
+- **Limitação declarada — sem rotação de chave (ainda)**: o blob não carrega id de chave, e o `cpf_hash` depende da chave. Trocar a `CPF_ENCRYPTION_KEY` hoje torna ilegíveis os CPFs já gravados e quebra a busca e a deduplicação por CPF (o hash muda). A "rotação trimestral" que esta regra prometia nunca existiu em código. O procedimento que uma rotação exigiria: (1) aceitar a chave anterior ao lado da nova (ex.: `CPF_ENCRYPTION_KEY_ANTERIOR`) e uma versão de blob nova com id de chave; (2) um job em lotes, por organização, que decifre com a anterior e regrave `cpf_encrypted` **e** `cpf_hash` com a nova, na mesma atualização (o CHECK exige as duas); (3) durante a janela, busca por CPF consulta os dois hashes; (4) só depois de zero linhas na versão antiga, retirar a chave anterior. Até lá: **não troque a `CPF_ENCRYPTION_KEY` de uma instalação com CPFs gravados**.
 - **Exceção**: Tenants que explicitamente desativam coleta de CPF nas regras de identity resolution (Sub-PRD 02 §3.3) não têm a coluna populada.
 
 ### L-08 — Logs nunca contêm CPF, mesmo em debug

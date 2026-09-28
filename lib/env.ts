@@ -75,6 +75,20 @@ const schema = z.object({
   /** Optional dedicated secret for cron endpoints (S-06.07 onwards). */
   INTERNAL_CRON_SECRET: z.string().optional().default(""),
   /**
+   * Segredo opcional e dedicado para assinar convites de equipe
+   * (`lib/auth/invite-token.ts`). Vazio = deriva do INTERNAL_SECRET, com rótulo
+   * próprio (separação de domínio). Lido direto de `process.env` pelo módulo do
+   * convite; registrado aqui para existir no inventário de variáveis.
+   */
+  INVITE_TOKEN_SECRET: z.string().optional().default(""),
+  /**
+   * Segredo dedicado para assinar o `state` (e o vínculo) dos fluxos OAuth
+   * (Google Agenda, Google Ads, Nuvemshop) — `lib/auth/chave-do-estado-oauth.ts`.
+   * Vazio: a chave é derivada do `INTERNAL_SECRET`, que também é bearer de cron.
+   * Lido direto do `process.env` pelo módulo; registrado aqui para o inventário.
+   */
+  OAUTH_STATE_SECRET: z.string().optional().default(""),
+  /**
    * Segredo do DONO DA INSTALAÇÃO para `POST /api/v1/tenants/provision` (um
    * sistema externo cria organizações). Vazio por padrão = a rota não existe
    * (404); com menos de 32 caracteres também fica desligada.
@@ -194,6 +208,19 @@ const schema = z.object({
   // when AI_GATEWAY_API_KEY is absent, so production boot must not be fatal.
   AI_GATEWAY_API_KEY: z.string().optional().default(""),
   AI_GATEWAY_BASE_URL: z.string().optional().default(""),
+  /**
+   * Teto de tempo de UMA requisição HTTP ao provedor de IA, em ms (padrão 90 s).
+   * Sem teto, um provedor travado prendia o turno e a fila atrás dele. Valor inválido vale o
+   * padrão — nunca derruba o boot. Quem aplica: `lib/ai/tempo-da-chamada.ts`.
+   */
+  LLM_CALL_TIMEOUT_MS: z.coerce.number().int().positive().default(90_000).catch(90_000),
+  /**
+   * Teto do TURNO inteiro do agente (passos + ferramentas), em ms (padrão
+   * 300 s). O de cima vale por requisição HTTP ao provedor; este vale para o
+   * `generateText` inteiro e fica abaixo de `QUEUE_VISIBILITY_TIMEOUT_MS`.
+   * Inválido vale o padrão. Ver `lib/ai/tempo-da-chamada.ts`.
+   */
+  LLM_TURN_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000).catch(300_000),
   // OpenRouter: alternativa ao gateway da Vercel, compatível com a API da
   // OpenAI. Opcional — sem ela nada muda; com ela o chat passa a ser roteado
   // por lá. Ver resolveLanguageModel() em lib/ai/gateway.ts.
@@ -539,6 +566,19 @@ const schema = z.object({
    * `lib/auth/politica-de-cadastro.ts`, com erro no log.
    */
   SIGNUP_MODE: z.string().optional().default(""),
+
+  /**
+   * Como esta instalação foi montada, quando isso muda o que as telas de
+   * `/admin` ensinam. Hoje só existe `dokploy` — gravado FIXO pelo
+   * `docker-compose.dokploy.yml`, nunca pelo operador: ali o login (GoTrue) lê
+   * SMTP e cadastro do Environment do serviço, e só um novo Deploy os aplica —
+   * não o `update.sh` do kit nem o painel da nuvem. Vazio = o kit de sempre.
+   *
+   * `z.string()` e NÃO `z.enum`, pelo mesmo motivo de `SIGNUP_MODE`: valor
+   * inesperado não pode derrubar o app no import; quem lê compara com
+   * `"dokploy"` e trata o resto como vazio.
+   */
+  DEPLOY_MODE: z.string().optional().default(""),
 
   /**
    * Par VAPID do Web Push. Opcionais: sem elas a bandeja só funciona com a aba

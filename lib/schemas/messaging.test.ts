@@ -60,11 +60,35 @@ describe("sendMessageSchema", () => {
     expect(r.success).toBe(false);
   });
 
+  // Auditoria P1: `media_url` do cliente virava proxy autenticado para a API
+  // do gateway de canal da instalação (compartilhado por todas as organizações)
+  // no GET /media.
   it("rejeita payload só com media_url", () => {
     const r = sendMessageSchema.safeParse({
       conversation_id: "11111111-1111-4111-8111-111111111111",
       type: "image",
       media_url: "https://cdn.example.com/foo.jpg",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("aceita media_url ao lado de body e o DESCARTA (contrato de quem já integrava)", () => {
+    const r = sendMessageSchema.safeParse({
+      conversation_id: "11111111-1111-4111-8111-111111111111",
+      type: "text",
+      body: "legenda",
+      media_url: "http://gateway-do-canal:3000/api/sessions",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.media_url).toBeUndefined();
+  });
+
+  it("aceita media_storage_path (o único caminho de mídia de saída)", () => {
+    const r = sendMessageSchema.safeParse({
+      conversation_id: "11111111-1111-4111-8111-111111111111",
+      type: "image",
+      media_storage_path: "org/conv/out-1.jpg",
+      media_mime: "image/jpeg",
     });
     expect(r.success).toBe(true);
   });

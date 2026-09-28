@@ -16,6 +16,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel } from "ai";
 
 import { env } from "@/lib/env";
+import { fetchComTetoPorRequisicao } from "@/lib/ai/tempo-da-chamada";
 
 /** Endpoint da OpenRouter. Compatível com a API da OpenAI, então o provider
  *  `@ai-sdk/openai` fala com ela sem dependência nova. */
@@ -67,17 +68,18 @@ export function resolveLanguageModel(model: ModelId): LanguageModel | null {
     return createOpenAI({
       apiKey: env.OPENROUTER_API_KEY,
       baseURL: env.OPENROUTER_BASE_URL || OPENROUTER_BASE_URL,
+      fetch: fetchComTetoPorRequisicao(),
     }).chat(id); // chat/completions, como o registry do worker (providers.ts)
   }
 
   if (id.startsWith("anthropic/") && env.ANTHROPIC_API_KEY) {
-    return createAnthropic({ apiKey: env.ANTHROPIC_API_KEY })(
+    return createAnthropic({ apiKey: env.ANTHROPIC_API_KEY, fetch: fetchComTetoPorRequisicao() })(
       id.slice("anthropic/".length),
     );
   }
 
   if (id.startsWith("openai/") && env.OPENAI_API_KEY) {
-    return createOpenAI({ apiKey: env.OPENAI_API_KEY })(id.slice("openai/".length));
+    return createOpenAI({ apiKey: env.OPENAI_API_KEY, fetch: fetchComTetoPorRequisicao() })(id.slice("openai/".length));
   }
 
   return null;

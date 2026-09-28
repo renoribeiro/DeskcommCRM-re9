@@ -5409,5 +5409,16 @@
   "Com o Supabase separado, o cadastro direto não acompanha a troca sozinho: o CRM já segue o modo novo, mas o Supabase continua com o modo anterior. Esta tela só avisa — nada é corrigido aqui.": "使用独立的 Supabase 时，直接注册不会自动跟随此次更改：CRM 已按新模式运行，但 Supabase 仍是原来的模式。本页面只提醒，不做任何修正。",
   "No painel do Supabase, em Authentication → Sign In / Up, desligue \"Allow new users to sign up\".": "在 Supabase 控制台的 Authentication → Sign In / Up 中，关闭 \"Allow new users to sign up\"。",
   "No painel do Supabase, em Authentication → Sign In / Up, ligue \"Allow new users to sign up\".": "在 Supabase 控制台的 Authentication → Sign In / Up 中，开启 \"Allow new users to sign up\"。",
-  "Em GoTrue próprio, a chave equivalente é:": "如使用自建 GoTrue，对应的配置项是："
+  "Em GoTrue próprio, a chave equivalente é:": "如使用自建 GoTrue，对应的配置项是：",
+  "Nesta instalação pelo Dokploy, o cadastro direto só acompanha a troca depois de um novo Deploy: o CRM já segue o modo novo, mas o login continua com o modo anterior. Esta tela só avisa — nada é corrigido aqui.": "在这个通过 Dokploy 安装的实例中，直接注册要在重新 Deploy 之后才会跟随更改：CRM 已经使用新模式，但登录服务仍保持旧模式。此页面仅作提示，这里不会进行任何修改。",
+  "No Dokploy, abra o serviço do CRM, ajuste esta chave na aba Environment e clique em Deploy:": "在 Dokploy 中打开 CRM 服务，在 Environment 标签页调整此配置项，然后点击 Deploy：",
+  "O e-mail do login é configurado no Dokploy.": "登录邮件在 Dokploy 中配置。",
+  "O servidor salvo aqui envia os e-mails do CRM (convites, avisos, LGPD). Os e-mails de \"esqueci a senha\" e de confirmação de cadastro saem pelas variáveis SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD e SMTP_FROM_EMAIL da aba Environment do serviço no Dokploy. Preencha lá os mesmos dados e clique em Deploy.": "此处保存的服务器用于发送 CRM 邮件（邀请、提醒、LGPD）。“忘记密码”和注册确认邮件则通过 Dokploy 中该服务 Environment 标签页的 SMTP_HOST、SMTP_PORT、SMTP_USERNAME、SMTP_PASSWORD 和 SMTP_FROM_EMAIL 变量发送。请在那里填写相同的信息并点击 Deploy。",
+  "Tipo de arquivo não suportado.": "不支持的文件类型。",
+  "o endereço (base URL) aponta para um destino que esta instalação não permite": "该地址（base URL）指向本安装不允许的目标",
+  "Confirme a verificação em duas etapas para continuar.": "请完成两步验证后继续。",
+  "Muitos pedidos de token. Tente em um minuto.": "令牌请求过多。请一分钟后再试。",
+  "won_reason inválido (texto de até 500 caracteres).": "won_reason 无效（最多 500 个字符的文本）。",
+  "O papel do token não pode ser maior que o seu.": "令牌的角色不能高于你的角色。",
+  "Esta instalação não tem a chave de criptografia de CPF configurada (CPF_ENCRYPTION_KEY). Salve o contato sem CPF ou peça a quem administra o servidor para configurá-la.": "本安装未配置 CPF 加密密钥（CPF_ENCRYPTION_KEY）。请在不填写 CPF 的情况下保存联系人，或请服务器管理员进行配置。"
 }

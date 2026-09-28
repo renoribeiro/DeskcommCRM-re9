@@ -13,6 +13,7 @@ import Link from "next/link";
 import { verifyInviteToken } from "@/lib/auth/invite-token";
 import { authRateLimited, AUTH_LIMITS } from "@/lib/auth/rate-limit";
 import { createClient } from "@/lib/supabase/server";
+import { signOut } from "@/app/actions/auth/signOut";
 import { AcceptInviteForm } from "./AcceptInviteForm";
 import { idiomaDoVisitante } from "@/lib/i18n/idiomaAnonimo";
 import { traduzir } from "@/lib/i18n/dicionario";
@@ -115,7 +116,7 @@ export default async function AcceptInvitePage({ params }: PageProps) {
           {t("mas o convite foi enviado para")} <strong>{payload.email}</strong>.{" "}
           {t("Saia e faça login com o email correto.")}
         </p>
-        <form action="/api/auth/signout" method="post" className="mt-4">
+        <form action={signOut} className="mt-4">
           <button
             type="submit"
             className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent"

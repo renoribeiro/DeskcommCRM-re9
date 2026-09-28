@@ -27,6 +27,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel } from "ai";
 
 import { DEEPSEEK_ENDPOINT, REQUESTY_ENDPOINT } from "@/lib/agent-engine/edge/llm/providers";
+import { fetchComTetoPorRequisicao } from "@/lib/ai/tempo-da-chamada";
 import { fetchParaDestinoDaOrganizacao } from "@/lib/automation/destinos-internos-autorizados";
 import { decryptKey, byteaToBuffer } from "@/lib/crypto/aes_gcm";
 import { logger } from "@/lib/logger";
@@ -529,13 +530,22 @@ async function decifrarChave(
 }
 
 /**
+ * O `fetch` do provedor: sempre com o teto POR REQUISIÇÃO (`LLM_CALL_TIMEOUT_MS`,
+ * `lib/ai/tempo-da-chamada.ts`) e, quando o endereço é de uma organização, com a
+ * régua de destino dela por dentro.
+ */
+function fetchDoProvedor(baseUrl: string | null): typeof fetch {
+  return fetchComTetoPorRequisicao(baseUrl ? fetchParaDestinoDaOrganizacao() : undefined);
+}
+
+/**
  * Instancia o provider. Espelha `createDefaultRegistry` do agent-engine — e a
  * duplicação é consciente e temporária: unificar exige que estes workers falem
  * `pg.Pool`, que é a dívida registrada no handoff. Provider desconhecido
  * devolve `null` para o chamador cair no padrão com aviso, nunca um fallback
  * silencioso para outro provedor.
  */
-function instanciar(
+export function instanciar(
   provider: string,
   apiKey: string,
   modelId: string,
@@ -543,27 +553,44 @@ function instanciar(
 ): LanguageModel | null {
   switch (provider) {
     case "anthropic":
-      return createAnthropic({ apiKey })(modelId);
+      return createAnthropic({ apiKey, fetch: fetchDoProvedor(null) })(modelId);
     case "openai":
-      return createOpenAI({ apiKey })(modelId);
+      return createOpenAI({ apiKey, fetch: fetchDoProvedor(null) })(modelId);
     case "google":
-      return createGoogleGenerativeAI({ apiKey })(modelId);
+      return createGoogleGenerativeAI({ apiKey, fetch: fetchDoProvedor(null) })(modelId);
+    // `base_url` do painel é escolha de uma ORGANIZAÇÃO (auditoria P4,
+    // `docs/imobiliario/04-…`): quando ele vem, o `fetch` do SDK passa pela
+    // régua de destino a CADA chamada, como no `custom` abaixo — senão a chave
+    // da organização ia para a rede interna da instalação. Sem `base_url`, o
+    // endpoint é a constante do fabricante e o `fetch` padrão basta.
     case "openrouter":
-      return createOpenAI({ apiKey, baseURL: baseUrl ?? OPENROUTER_BASE_URL }).chat(modelId); // ver providers.ts
+      return createOpenAI({
+        apiKey,
+        baseURL: baseUrl ?? OPENROUTER_BASE_URL,
+        fetch: fetchDoProvedor(baseUrl),
+      }).chat(modelId); // ver providers.ts
     // A DeepSeek fala a API da OpenAI. Sem este caso, uma organização em
     // DeepSeek cairia no `default` (null) e a pilha antiga seguiria para o
     // padrão com aviso — a tela ofereceria um provedor que estes workers ignoram.
     case "deepseek":
-      return createOpenAI({ apiKey, baseURL: baseUrl ?? DEEPSEEK_ENDPOINT })(modelId);
+      return createOpenAI({
+        apiKey,
+        baseURL: baseUrl ?? DEEPSEEK_ENDPOINT,
+        fetch: fetchDoProvedor(baseUrl),
+      })(modelId);
     case "requesty":
-      return createOpenAI({ apiKey, baseURL: baseUrl ?? REQUESTY_ENDPOINT }).chat(modelId); // ver providers.ts
+      return createOpenAI({
+        apiKey,
+        baseURL: baseUrl ?? REQUESTY_ENDPOINT,
+        fetch: fetchDoProvedor(baseUrl),
+      }).chat(modelId); // ver providers.ts
     // Provedor personalizado (#1642): endpoint do operador. Sem `baseUrl` não
     // há onde ir — `null` deixa o chamador cair no padrão COM AVISO, que é o
     // contrato deste switch; inventar um endpoint seria mandar a chave do
     // gateway para outro lugar.
     case "custom":
       return baseUrl
-        ? createOpenAI({ apiKey, baseURL: baseUrl, fetch: fetchParaDestinoDaOrganizacao() }).chat(modelId)
+        ? createOpenAI({ apiKey, baseURL: baseUrl, fetch: fetchDoProvedor(baseUrl) }).chat(modelId)
         : null;
     default:
       return null;

@@ -43,11 +43,12 @@ chmod +x "$TMP/bin/crond"
 rodar() { # $1 = valor de INTERNAL_SECRET ("" = ausente)
   local out="$TMP/crontab"
   : > "$out"
+  rm -rf "$TMP/cabecalho"
   if [ -z "$1" ]; then
-    env -u INTERNAL_SECRET PATH="$TMP/bin:$PATH" CRONTAB_PATH="$out" \
+    env -u INTERNAL_SECRET PATH="$TMP/bin:$PATH" CRONTAB_PATH="$out" CRON_HEADER_DIR="$TMP/cabecalho" \
       sh "$ENTRYPOINT" >"$TMP/saida" 2>&1
   else
-    env INTERNAL_SECRET="$1" PATH="$TMP/bin:$PATH" CRONTAB_PATH="$out" \
+    env INTERNAL_SECRET="$1" PATH="$TMP/bin:$PATH" CRONTAB_PATH="$out" CRON_HEADER_DIR="$TMP/cabecalho" \
       sh "$ENTRYPOINT" >"$TMP/saida" 2>&1
   fi
   echo $?
@@ -71,8 +72,9 @@ check "gerou o crontab mesmo com segredo cheio de metacaractere" test "$RC" -eq 
 
 # A medição que importa: pegar a PRIMEIRA linha, tirar o prefixo de agendamento,
 # e mandar um `sh` de verdade avaliá-la — exatamente o que o crond faz. O `curl`
-# é dublado por um script que imprime o header que recebeu.
-printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = "-H" ] && { printf "%%s" "$2"; exit 0; }; shift; done\nexit 1\n' > "$TMP/bin/curl"
+# é dublado por um script que imprime o header que recebeu — e, como o curl de
+# verdade, com `-H @arquivo` o header é o CONTEÚDO do arquivo (sem a quebra final).
+printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = "-H" ]; then case "$2" in @*) f="${2#@}"; printf "%%s" "$(cat "$f")";; *) printf "%%s" "$2";; esac; exit 0; fi; shift; done\nexit 1\n' > "$TMP/bin/curl"
 chmod +x "$TMP/bin/curl"
 LINHA="$(head -1 "$TMP/crontab")"
 COMANDO="${LINHA#* * * * * }"                 # tira o agendamento de 5 campos
@@ -88,15 +90,42 @@ else
   fail=1
 fi
 # Controle negativo do próprio instrumento: se a crase tivesse sido executada, o
-# crontab conteria a saída de `whoami` no lugar dela, não o texto literal.
-check "a crase NÃO foi executada (está literal no arquivo)" \
-  grep -q 'whoami' "$TMP/crontab"
+# arquivo do header conteria a saída de `whoami` no lugar dela, não o texto literal.
+check "a crase NÃO foi executada (está literal no arquivo do header)" \
+  grep -q 'whoami' "$TMP/cabecalho/cron-header"
+
+echo "scheduler: o segredo não aparece em linha de comando nem no crontab"
+# Na linha de comando ele ficava em /proc/<pid>/cmdline a cada disparo — o `ps`
+# do host (docker top) o mostrava. Agora o curl lê o header de um arquivo.
+check "o crontab não contém o segredo" sh -c "! grep -qF 'whoami' '$TMP/crontab'"
+check "o crontab não contém 'Bearer'" sh -c "! grep -q 'Bearer' '$TMP/crontab'"
+check "toda linha lê o header de arquivo (-H @…)" \
+  test "$(grep -c -- "-H '@" "$TMP/crontab")" -eq "$(grep -c . "$TMP/crontab")"
+check "o arquivo do header é só do dono (0600)" \
+  sh -c "ls -l '$TMP/cabecalho/cron-header' | grep -q '^-rw-------'"
+check "o diretório do header é só do dono (0700)" \
+  sh -c "ls -ld '$TMP/cabecalho' | grep -q '^drwx------'"
 
 echo "scheduler: sem INTERNAL_SECRET, recusa em vez de subir mudo"
 RC="$(rodar '')"
 check "sai com código 1" test "$RC" -eq 1
 check "explica o motivo na saída" grep -q "INTERNAL_SECRET" "$TMP/saida"
 check "não deixou crontab pela metade" test ! -s "$TMP/crontab"
+
+echo "scheduler: a origem do app (padrão app:3000; o compose do Dokploy repassa outra)"
+RC="$(rodar 'segredo-simples')"
+check "sem SCHEDULER_APP_ORIGIN, chama http://app:3000 (como sempre)" \
+  bash -c '[ "$(grep -c "\"http://app:3000/api/v1/cron/" "$1")" -eq "$(grep -c . "$1")" ]' _ "$TMP/crontab"
+: > "$TMP/crontab"
+env INTERNAL_SECRET=s SCHEDULER_APP_ORIGIN=http://imobcrm-app:3000 PATH="$TMP/bin:$PATH" CRON_HEADER_DIR="$TMP/cabecalho" \
+  CRONTAB_PATH="$TMP/crontab" sh "$ENTRYPOINT" >"$TMP/saida" 2>&1; RC=$?
+check "com SCHEDULER_APP_ORIGIN, toda linha usa a origem dada" \
+  bash -c '[ "$1" -eq 0 ] && [ "$(grep -c "\"http://imobcrm-app:3000/api/v1/cron/" "$2")" -eq "$(grep -c . "$2")" ]' _ "$RC" "$TMP/crontab"
+: > "$TMP/crontab"
+env INTERNAL_SECRET=s SCHEDULER_APP_ORIGIN='http://x`whoami`:3000' PATH="$TMP/bin:$PATH" CRON_HEADER_DIR="$TMP/cabecalho" \
+  CRONTAB_PATH="$TMP/crontab" sh "$ENTRYPOINT" >"$TMP/saida" 2>&1; RC=$?
+check "origem com metacaractere é recusada (ela entra entre aspas duplas no crontab)" \
+  bash -c '[ "$1" -eq 1 ] && [ ! -s "$2" ] && grep -q SCHEDULER_APP_ORIGIN "$3"' _ "$RC" "$TMP/crontab" "$TMP/saida"
 
 if [ "$fail" -eq 0 ]; then
   echo "OK — todas as provas passaram."

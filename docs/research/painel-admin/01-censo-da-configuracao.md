@@ -175,7 +175,7 @@ não de convenção de pasta. **Nº de leitores** conta arquivos de produção
 | `AI_CRED_AES_KEY` | CHAVE-MESTRA | app + worker | 1 | `lib/crypto/aes_gcm.ts:4` | Cifra as API keys de `ai_provider_credentials` (AES-256-GCM em Node); guardá-la cifrada por si mesma é circular. |
 | `LGPD_SIGNING_KEY` | CHAVE-MESTRA | app + worker | 1 | `lib/lgpd/pades-signer.ts:24` | Assina o PDF PAdES do export; é chave de assinatura, não configuração. |
 | `VAPID_PUBLIC_KEY` | CHAVE-MESTRA | app + worker | 1 | `lib/notifications/vapid.ts:4` | Metade de um par assimétrico; trocar invalida toda inscrição de push já feita. |
-| `CPF_ENCRYPTION_KEY` | CHAVE-MESTRA | **nenhum** | 0 | `— (sem leitor)` | Chave de cifra declarada `required()` — e ÓRFÃ: zero leitores em código de produção. |
+| `CPF_ENCRYPTION_KEY` | CHAVE-MESTRA | app | 1 | `lib/contacts/cpf.ts` | Material das duas chaves do CPF, derivadas por HKDF: AES-256-GCM de `cpf_encrypted` e HMAC-SHA256 de `cpf_hash`, no servidor Node. Era órfã quando este censo foi medido; deixou de ser. **Sem rotação**: trocá-la invalida os CPFs gravados e a busca por hash (ver L-07 em `docs/business-rules/00-business-rules-catalog.md`). |
 | `NUVEMSHOP_OAUTH_ENCRYPTION_KEY` | CHAVE-MESTRA | **nenhum** | 0 | `— (sem leitor)` | A chave mestra de `fn_encrypt_oauth`. JÁ MORA NO BANCO (`private.app_secrets`), semeada pelo kit — nenhum TS a lê. |
 | `WAHA_BYO_ENCRYPTION_KEY` | CHAVE-MESTRA | **nenhum** | 0 | `— (sem leitor)` | Chave de cifra declarada `required()` — e ÓRFÃ: zero leitores em código de produção. |
 | `NEXT_PUBLIC_ADMIN_URL` | BUILD-TIME | **nenhum** | 0 | `— (sem leitor)` | `ARG`+`ENV` no estágio de build do Dockerfile (linhas 28 e 37) e ZERO leitores em código: fica no bundle e não move nada. |
@@ -279,6 +279,16 @@ produção se recusa a subir sem duas chaves de cifra que nenhuma linha de códi
 e os dois contêineres (app e worker) validam as mesmas 64. `NEXT_PUBLIC_ADMIN_URL` é a
 quarta, e é também o único exemplar puro de BUILD-TIME: `ARG` + `ENV` no estágio de
 build (`Dockerfile:28` e `:37`), assada no bundle, lida por ninguém.
+
+> **Atualização (auditoria de segurança de 2026-09):** `CPF_ENCRYPTION_KEY` **deixou de
+> ser órfã**. `lib/contacts/cpf.ts` a lê e deriva dela, por HKDF-SHA256, duas chaves:
+> AES-256-GCM para `cpf_encrypted` (blob `0x01 ‖ iv ‖ tag ‖ cifra`, cifrado no servidor
+> Node, não no banco) e HMAC-SHA256 para `cpf_hash`. A contagem de órfãs acima é a da
+> data do censo. **Não há rotação**: o blob tem byte de versão, mas não id de chave, e o
+> hash depende da chave — trocá-la deixa ilegíveis os CPFs gravados e quebra a busca por
+> CPF. O procedimento que uma rotação exigiria está em L-07
+> (`docs/business-rules/00-business-rules-catalog.md`). Para conferir o leitor sem
+> confiar nesta nota: `rg -n "CPF_ENCRYPTION_KEY" lib --glob '!*.test.ts'`.
 
 ---
 

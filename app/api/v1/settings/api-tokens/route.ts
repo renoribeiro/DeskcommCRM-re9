@@ -13,7 +13,8 @@ import { ok, fail } from "@/lib/api/wrappers";
 import { ApiError } from "@/lib/api/types";
 import { audit } from "@/lib/audit";
 import { requireRole } from "@/lib/auth/require-role";
-import { createApiTokenSchema, validateRequest } from "@/lib/schemas";
+import { createApiTokenSchema, papelDoTokenCabeNoCriador, validateRequest } from "@/lib/schemas";
+import { PREFIXO_DO_TOKEN_EFEMERO } from "@/lib/ai/runtime/mcp_token";
 import { createClient } from "@/lib/supabase/server";
 import { traduzir } from "@/lib/i18n/dicionario";
 
@@ -21,6 +22,12 @@ export const dynamic = "force-dynamic";
 
 const SELECT_COLS =
   "id, name, prefix, scopes, last_used_at, expires_at, revoked_at, created_at";
+
+/**
+ * Teto da listagem. O teto de tokens ATIVOS é do banco (dezenas); somados os
+ * revogados e vencidos de anos, sem limite a resposta crescia para sempre.
+ */
+export const LIMITE_DA_LISTAGEM = 200;
 
 export async function GET(_req: NextRequest): Promise<Response> {
   const requestId = randomUUID();
@@ -33,7 +40,14 @@ export async function GET(_req: NextRequest): Promise<Response> {
     .from("api_tokens")
     .select(SELECT_COLS)
     .eq("organization_id", activeOrg.orgId)
-    .order("created_at", { ascending: false });
+    // Os tokens EFÊMEROS do agente (um por turno, 5 min de vida — ver
+    // `lib/ai/runtime/mcp_token.ts`) não são chaves de ninguém: listá-los
+    // enchia a tela de centenas de linhas `agent-run:<run>` e escondia as
+    // chaves de verdade. Uma pessoa não consegue criar token com esse nome
+    // (`createApiTokenSchema`), então o filtro não esconde chave humana.
+    .not("name", "like", `${PREFIXO_DO_TOKEN_EFEMERO}%`)
+    .order("created_at", { ascending: false })
+    .limit(LIMITE_DA_LISTAGEM);
   if (error) return fail("internal_error", error.message, 500, { requestId });
   return ok(data ?? [], { requestId });
 }
@@ -59,6 +73,18 @@ export async function POST(req: NextRequest): Promise<Response> {
       });
     }
     throw err;
+  }
+
+  // O token não concede papel acima do de quem o cria — senão emitir um token
+  // seria o caminho para subir de papel. `authz.org.role` é o papel EFETIVO,
+  // lido do banco por `requireRole`.
+  if (!papelDoTokenCabeNoCriador(input.scopes, authz.org.role)) {
+    return fail(
+      "validation_failed",
+      t("O papel do token não pode ser maior que o seu."),
+      422,
+      { requestId },
+    );
   }
 
   const prefix = `dsk_${randomBytes(4).toString("hex")}`;
@@ -94,6 +120,12 @@ export async function POST(req: NextRequest): Promise<Response> {
     // lugar da instrução que o erro já traz, e o toast da tela propagaria o 500.
     if (insErr.code === "PT409") {
       return fail("api_token_teto_atingido", insErr.message, 409, { requestId });
+    }
+    // PT403: o gatilho `trg_valida_token_de_pessoa` (migration 5001) repete no
+    // banco a lista fechada, o nome reservado e o teto de papel. O Zod acima já
+    // recusa antes; chegar aqui é divergência entre as duas listas, não 500.
+    if (insErr.code === "PT403") {
+      return fail("forbidden", insErr.message, 403, { requestId });
     }
     return fail("internal_error", insErr.message, 500, { requestId });
   }

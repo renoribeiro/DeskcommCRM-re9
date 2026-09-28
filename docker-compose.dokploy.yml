@@ -25,11 +25,29 @@
 #   /auth/v1, /rest/v1, /realtime/v1, /storage/v1, /functions/v1 e /graphql/v1,
 #   com prioridade maior). Postgres, Redis e WAHA ficam só na rede privada.
 #
+# NOMES ÚNICOS (imobcrm-*)
+# ------------------------
+#   `app` e `api-gw` estão TAMBÉM na dokploy-network, que é compartilhada com
+#   todo outro sistema do Dokploy. Lá, `db`, `auth`, `rest` ou `meta` podem ser o
+#   contêiner de outro projeto — e quem ganhasse a resolução de nome receberia a
+#   senha do banco ou o token de login. Por isso todo serviço interno tem um
+#   apelido único na rede privada (imobcrm-db, imobcrm-auth…) e TODA URL interna
+#   usa o apelido, nunca o nome do serviço. O gateway reescreve o cds.yaml
+#   oficial para os mesmos apelidos na partida (infra/dokploy/gateway-entrypoint.sh).
+#
+# MEMÓRIA (VPS de 8 GB)
+# ---------------------
+#   Todo serviço tem mem_limit. A soma dos tetos dos que ficam no ar é ~6,6 GB
+#   (o setup roda e sai); o uso real fica bem abaixo, e o Dokploy + Traefik
+#   ocupam ~0,5 GB. Teto não é reserva: ele existe para um serviço que dispara
+#   ser reiniciado sozinho, em vez de o sistema matar o Postgres.
+#
 # DADOS
 # -----
 #   Volumes NOMEADOS (db-data, storage-data, waha-*): o Dokploy re-clona o
 #   código a cada deploy, então nada que precisa sobreviver mora em pasta do
-#   repositório. Faça backup de db-data e storage-data (docs/imobiliario/03-…).
+#   repositório. Backup: infra/dokploy/backup.sh (banco, arquivos e sessões do
+#   WhatsApp, com conferência); restauração em docs/imobiliario/03-….
 #
 # Os arquivos do Supabase em infra/dokploy/supabase/ são cópia fixa da versão
 # oficial self-hosted/v0.8.1 (a mesma do kit). Gate: tests/shell/dokploy-compose.test.sh.
@@ -40,34 +58,81 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+# Tudo o que lib/env.ts lê. As opcionais entram como ${VAR:-} (ou com o padrão
+# do próprio lib/env.ts), para que QUALQUER uma possa ser ligada pela aba
+# Environment do Dokploy sem editar este arquivo. O teste confere esta lista
+# contra lib/env.ts: variável nova lá sem linha aqui reprova.
 x-crm-env: &crm-env
   NODE_ENV: production
-  APP_NAME: ${APP_NAME:-DeskcommCRM}
-  SIGNUP_MODE: ${SIGNUP_MODE:-aberto}
+  # Diz às telas de /admin que o login (GoTrue) desta instalação lê SMTP e
+  # cadastro do Environment do Dokploy — não do update.sh nem do painel da nuvem.
+  DEPLOY_MODE: dokploy
+  # ── Endereços (apelidos únicos da rede privada; ver o cabeçalho) ──
   NEXT_PUBLIC_APP_URL: https://${DOMAIN:?defina DOMAIN}
   NEXT_PUBLIC_ADMIN_URL: https://${DOMAIN}
   NEXT_PUBLIC_SUPABASE_URL: https://${DOMAIN}
   NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY:?defina ANON_KEY}
   SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:?defina SERVICE_ROLE_KEY}
-  SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}@db:5432/postgres
+  SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
+  # Vazio de propósito: o CRM fala com o banco pelo papel `postgres` do próprio
+  # Supabase local; a URL de administrador é do kit com Supabase de fora.
   SUPABASE_DB_ADMIN_URL: ""
+  WAHA_API_BASE_URL: http://imobcrm-waha:3000
+  WAHA_WEBHOOK_BASE_URL: http://imobcrm-app:3000
+  UPSTASH_REDIS_REST_URL: http://imobcrm-srh:80
+  UPSTASH_REDIS_REST_TOKEN: ${SRH_TOKEN:?defina SRH_TOKEN}
+  # ── Segredos obrigatórios (saem do gerar-env.sh) ──
   INTERNAL_SECRET: ${INTERNAL_SECRET:?defina INTERNAL_SECRET}
+  INVITE_TOKEN_SECRET: ${INVITE_TOKEN_SECRET:-}
+  OAUTH_STATE_SECRET: ${OAUTH_STATE_SECRET:-}
   INTERNAL_CRON_SECRET: ${INTERNAL_CRON_SECRET:?defina INTERNAL_CRON_SECRET}
   NUVEMSHOP_OAUTH_ENCRYPTION_KEY: ${NUVEMSHOP_OAUTH_ENCRYPTION_KEY:?defina NUVEMSHOP_OAUTH_ENCRYPTION_KEY}
-  NUVEMSHOP_ENABLED: "false"
   CPF_ENCRYPTION_KEY: ${CPF_ENCRYPTION_KEY:?defina CPF_ENCRYPTION_KEY}
   AI_CRED_AES_KEY: ${AI_CRED_AES_KEY:?defina AI_CRED_AES_KEY}
   WAHA_BYO_ENCRYPTION_KEY: ${WAHA_BYO_ENCRYPTION_KEY:?defina WAHA_BYO_ENCRYPTION_KEY}
   IMPERSONATE_COOKIE_SECRET: ${IMPERSONATE_COOKIE_SECRET:?defina IMPERSONATE_COOKIE_SECRET}
   LGPD_SIGNING_KEY: ${LGPD_SIGNING_KEY:?defina LGPD_SIGNING_KEY}
-  WAHA_API_BASE_URL: http://waha:3000
-  WAHA_WEBHOOK_BASE_URL: http://app:3000
   WAHA_API_KEY: ${WAHA_API_KEY:?defina WAHA_API_KEY}
   WAHA_HMAC_SECRET: ${WAHA_HMAC_SECRET:?defina WAHA_HMAC_SECRET}
-  UPSTASH_REDIS_REST_URL: http://srh:80
-  UPSTASH_REDIS_REST_TOKEN: ${SRH_TOKEN:?defina SRH_TOKEN}
-  AGENT_DISPATCH_CONSUMER: engine
+  # Desligado por padrão, como no kit: o WAHA Core (a imagem abaixo) NÃO assina
+  # os webhooks — medido na 2026.7.2 (docs/testing/user-journey-map.md) —, e
+  # exigir assinatura derrubaria a entrada de TODA mensagem. Ligue (true) só com
+  # WAHA Plus. A defesa que vale sem assinatura é de rede: ver o `app`.
+  WAHA_WEBHOOK_REQUIRE_SIGNATURE: ${WAHA_WEBHOOK_REQUIRE_SIGNATURE:-false}
+  # ── Comportamento do CRM ──
+  APP_NAME: ${APP_NAME:-DeskcommCRM}
+  APP_LOGO_URL: ${APP_LOGO_URL:-}
+  APP_ACCENT_HEX: ${APP_ACCENT_HEX:-}
+  SIGNUP_MODE: ${SIGNUP_MODE:-aberto}
+  SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+  AGENT_DISPATCH_CONSUMER: ${AGENT_DISPATCH_CONSUMER:-engine}
   INTERNAL_AGENT_RUN_STUB: "false"
+  AI_BUDGET_ENFORCEMENT: ${AI_BUDGET_ENFORCEMENT:-on}
+  LLM_CALL_TIMEOUT_MS: ${LLM_CALL_TIMEOUT_MS:-90000}
+  LLM_TURN_TIMEOUT_MS: ${LLM_TURN_TIMEOUT_MS:-300000}
+  DISCLOSURE_MODE: ${DISCLOSURE_MODE:-}
+  PROMISE_SEMANTIC_ENABLED: ${PROMISE_SEMANTIC_ENABLED:-}
+  TENANT_PROVISIONING_SECRET: ${TENANT_PROVISIONING_SECRET:-}
+  EXTENSIONS_LOCAL_CATALOG_ORIGIN: ${EXTENSIONS_LOCAL_CATALOG_ORIGIN:-}
+  SENTRY_DSN: ${SENTRY_DSN:-off}
+  # ── IA ──
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-}
+  OPENROUTER_APP_URL: ${OPENROUTER_APP_URL:-}
+  OPENROUTER_APP_TITLE: ${OPENROUTER_APP_TITLE:-}
+  AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
+  AI_GATEWAY_BASE_URL: ${AI_GATEWAY_BASE_URL:-}
+  VERCEL_AI_GATEWAY_URL: ${VERCEL_AI_GATEWAY_URL:-}
+  TRANSCRIPTION_API_KEY: ${TRANSCRIPTION_API_KEY:-}
+  TRANSCRIPTION_BASE_URL: ${TRANSCRIPTION_BASE_URL:-}
+  TRANSCRIPTION_MODEL: ${TRANSCRIPTION_MODEL:-}
+  TRANSCRIPTION_LANGUAGES: ${TRANSCRIPTION_LANGUAGES:-}
+  IA_DESTINOS_INTERNOS_PERMITIDOS: ${IA_DESTINOS_INTERNOS_PERMITIDOS:-}
+  JEV_API_BASE_URL: ${JEV_API_BASE_URL:-}
+  # ── E-mail ──
   SMTP_HOST: ${SMTP_HOST:-}
   SMTP_PORT: ${SMTP_PORT:-587}
   SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
@@ -75,16 +140,53 @@ x-crm-env: &crm-env
   SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
   SMTP_FROM_NAME: ${SMTP_FROM_NAME:-}
-  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-  SENTRY_DSN: ${SENTRY_DSN:-off}
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
+  # ── Notificações (Web Push) ──
+  VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+  VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+  # ── LGPD ──
+  LGPD_EXPORT_EXPIRES_HOURS: ${LGPD_EXPORT_EXPIRES_HOURS:-72}
+  LGPD_DPO_EMAIL: ${LGPD_DPO_EMAIL:-}
+  # ── Integrações ──
+  GOOGLE_CALENDAR_CLIENT_ID: ${GOOGLE_CALENDAR_CLIENT_ID:-}
+  GOOGLE_CALENDAR_CLIENT_SECRET: ${GOOGLE_CALENDAR_CLIENT_SECRET:-}
+  GOOGLE_ADS_DEVELOPER_TOKEN: ${GOOGLE_ADS_DEVELOPER_TOKEN:-}
+  GOOGLE_ADS_OAUTH_CLIENT_ID: ${GOOGLE_ADS_OAUTH_CLIENT_ID:-}
+  GOOGLE_ADS_OAUTH_CLIENT_SECRET: ${GOOGLE_ADS_OAUTH_CLIENT_SECRET:-}
+  META_WEBHOOK_BASE_URL: ${META_WEBHOOK_BASE_URL:-}
+  META_GRAPH_BASE_URL: ${META_GRAPH_BASE_URL:-}
+  META_ADS_GRAPH_BASE_URL: ${META_ADS_GRAPH_BASE_URL:-}
+  NUVEMSHOP_ENABLED: ${NUVEMSHOP_ENABLED:-false}
+  NUVEMSHOP_APP_ID: ${NUVEMSHOP_APP_ID:-}
+  NUVEMSHOP_CLIENT_ID: ${NUVEMSHOP_CLIENT_ID:-}
+  NUVEMSHOP_CLIENT_SECRET: ${NUVEMSHOP_CLIENT_SECRET:-}
+  WACALLS_API_BASE_URL: ${WACALLS_API_BASE_URL:-}
+  WACALLS_API_TOKEN: ${WACALLS_API_TOKEN:-}
+  DATAFY_ENABLED: ${DATAFY_ENABLED:-}
+  # ── Retenção (vazio = o padrão do produto; ver lib/retencao/politica.ts) ──
+  WEBHOOK_LOG_BODY_RETENTION_DAYS: ${WEBHOOK_LOG_BODY_RETENTION_DAYS:-7}
+  WEBHOOK_LOG_ROW_RETENTION_DAYS: ${WEBHOOK_LOG_ROW_RETENTION_DAYS:-90}
+  LEAD_CAPTURE_RETENTION_DAYS: ${LEAD_CAPTURE_RETENTION_DAYS:-}
+  JOB_QUEUE_RETENTION_DAYS: ${JOB_QUEUE_RETENTION_DAYS:-}
+  AUDIT_LOG_RETENTION_DAYS: ${AUDIT_LOG_RETENTION_DAYS:-}
+  CASE_CHAT_RETENTION_DAYS: ${CASE_CHAT_RETENTION_DAYS:-}
+  PASSAGEM_RETENTION_DAYS: ${PASSAGEM_RETENTION_DAYS:-}
+  CASE_ALERT_RETENTION_DAYS: ${CASE_ALERT_RETENTION_DAYS:-}
+  PROSPECCAO_RETENTION_DAYS: ${PROSPECCAO_RETENTION_DAYS:-}
+  JEV_OBSERVACOES_RETENTION_DAYS: ${JEV_OBSERVACOES_RETENTION_DAYS:-}
+  DRAFT_RETENTION_DAYS: ${DRAFT_RETENTION_DAYS:-}
+  GOLDEN_CANDIDATES_RETENTION_DAYS: ${GOLDEN_CANDIDATES_RETENTION_DAYS:-}
 
 services:
   # ══════════════════════════════ SUPABASE ══════════════════════════════════
   db:
     image: supabase/postgres:17.6.1.136
     restart: unless-stopped
+    mem_limit: 1536m
+    networks:
+      default:
+        aliases: [imobcrm-db]
     volumes:
       - ./infra/dokploy/supabase/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
       - ./infra/dokploy/supabase/db/webhooks.sql:/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql:ro
@@ -110,12 +212,19 @@ services:
       POSTGRES_DB: postgres
       JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET}
       JWT_EXP: 3600
-    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal"]
+    # 512 MB de cache próprio e a dica de ~2 GB de cache do sistema: o padrão da
+    # imagem assume uma máquina minúscula, e o teto acima é 1,5 GB.
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal",
+              "-c", "shared_buffers=512MB", "-c", "effective_cache_size=2GB"]
     logging: *default-logging
 
   auth:
     image: supabase/gotrue:v2.196.0
     restart: unless-stopped
+    mem_limit: 256m
+    networks:
+      default:
+        aliases: [imobcrm-auth]
     depends_on:
       db:
         condition: service_healthy
@@ -129,7 +238,7 @@ services:
       GOTRUE_API_PORT: 9999
       API_EXTERNAL_URL: https://${DOMAIN}/auth/v1
       GOTRUE_DB_DRIVER: postgres
-      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
       GOTRUE_SITE_URL: https://${DOMAIN}
       GOTRUE_URI_ALLOW_LIST: https://${DOMAIN}/auth/confirm,https://${DOMAIN}/**
       GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
@@ -161,6 +270,10 @@ services:
   rest:
     image: postgrest/postgrest:v14.17
     restart: unless-stopped
+    mem_limit: 256m
+    networks:
+      default:
+        aliases: [imobcrm-rest]
     depends_on:
       db:
         condition: service_healthy
@@ -170,8 +283,10 @@ services:
       timeout: 5s
       retries: 3
     environment:
-      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/postgres
-      PGRST_DB_SCHEMAS: public,storage,graphql_public
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
+      # Só o que o CRM usa, igual ao compose oficial: `storage` exposto na REST
+      # é superfície a mais, e os arquivos passam pela API do storage.
+      PGRST_DB_SCHEMAS: public,graphql_public
       PGRST_DB_MAX_ROWS: 1000
       PGRST_DB_EXTRA_SEARCH_PATH: public
       PGRST_DB_ANON_ROLE: anon
@@ -187,14 +302,17 @@ services:
   realtime:
     image: supabase/realtime:v2.134.10
     restart: unless-stopped
+    mem_limit: 512m
     depends_on:
       db:
         condition: service_healthy
     networks:
       default:
-        # O gateway chama o Realtime por este nome, e é dele que o Realtime tira
-        # o tenant (`realtime-dev`) — igual ao compose oficial.
-        aliases: [realtime-dev.supabase-realtime]
+        # `imobcrm-realtime` é o endereço que o gateway usa. O Realtime tira o
+        # tenant (`realtime-dev`) do cabeçalho Host, que o gateway reescreve
+        # para `realtime-dev.supabase-realtime` (lds.yaml oficial) — o apelido
+        # antigo fica para quem ainda chamar por ele.
+        aliases: [imobcrm-realtime, realtime-dev.supabase-realtime]
     healthcheck:
       test: ["CMD-SHELL", "curl -sSfL --head -o /dev/null -H \"Authorization: Bearer ${ANON_KEY}\" http://localhost:4000/api/tenants/realtime-dev/health"]
       timeout: 5s
@@ -203,13 +321,15 @@ services:
       start_period: 10s
     environment:
       PORT: 4000
-      DB_HOST: db
+      DB_HOST: imobcrm-db
       DB_PORT: 5432
       DB_USER: supabase_admin
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       DB_NAME: postgres
       DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime"
-      DB_ENC_KEY: supabaserealtime
+      # 16 caracteres, gerado pelo gerar-env.sh. Não troque depois de instalar:
+      # o Realtime guarda a senha do banco cifrada com ela.
+      DB_ENC_KEY: ${REALTIME_DB_ENC_KEY:?defina REALTIME_DB_ENC_KEY (16 caracteres; instalação que já subiu com o valor antigo usa supabaserealtime)}
       API_JWT_SECRET: ${JWT_SECRET}
       SECRET_KEY_BASE: ${SECRET_KEY_BASE:?defina SECRET_KEY_BASE}
       METRICS_JWT_SECRET: ${JWT_SECRET}
@@ -225,6 +345,10 @@ services:
   storage:
     image: supabase/storage-api:v1.74.0
     restart: unless-stopped
+    mem_limit: 384m
+    networks:
+      default:
+        aliases: [imobcrm-storage]
     depends_on:
       db:
         condition: service_healthy
@@ -233,7 +357,7 @@ services:
       imgproxy:
         condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://storage:5000/status"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://imobcrm-storage:5000/status"]
       timeout: 5s
       interval: 5s
       retries: 3
@@ -241,9 +365,9 @@ services:
     environment:
       ANON_KEY: ${ANON_KEY}
       SERVICE_KEY: ${SERVICE_ROLE_KEY}
-      POSTGREST_URL: http://rest:3000
+      POSTGREST_URL: http://imobcrm-rest:3000
       AUTH_JWT_SECRET: ${JWT_SECRET}
-      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
       STORAGE_PUBLIC_URL: https://${DOMAIN}
       REQUEST_ALLOW_X_FORWARDED_PATH: "true"
       FILE_SIZE_LIMIT: 52428800
@@ -253,7 +377,7 @@ services:
       TENANT_ID: stub
       REGION: stub
       ENABLE_IMAGE_TRANSFORMATION: "true"
-      IMGPROXY_URL: http://imgproxy:5001
+      IMGPROXY_URL: http://imobcrm-imgproxy:5001
     volumes:
       - storage-data:/var/lib/storage
     logging: *default-logging
@@ -261,6 +385,10 @@ services:
   imgproxy:
     image: darthsim/imgproxy:v3.31.4
     restart: unless-stopped
+    mem_limit: 512m
+    networks:
+      default:
+        aliases: [imobcrm-imgproxy]
     volumes:
       - storage-data:/var/lib/storage
     healthcheck:
@@ -274,11 +402,16 @@ services:
       IMGPROXY_USE_ETAG: "true"
       IMGPROXY_AUTO_WEBP: "true"
       IMGPROXY_MAX_SRC_RESOLUTION: 16.8
+      # Duas imagens por vez: cada uma pode ocupar centenas de MB na conversão.
+      # WORKERS é o nome da v3; CONCURRENCY, o antigo, que ela ainda aceita.
+      IMGPROXY_WORKERS: "2"
+      IMGPROXY_CONCURRENCY: "2"
     logging: *default-logging
 
   api-gw:
     image: envoyproxy/envoy:v1.39.1
     restart: unless-stopped
+    mem_limit: 256m
     depends_on:
       auth:
         condition: service_healthy
@@ -288,7 +421,7 @@ services:
         condition: service_started
     networks:
       default:
-        aliases: [envoy, kong]
+        aliases: [imobcrm-gw, envoy, kong]
       dokploy:
     healthcheck:
       test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/8000'"]
@@ -297,7 +430,11 @@ services:
       retries: 3
     volumes:
       - ./infra/dokploy/supabase/api/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
-      - ./infra/dokploy/supabase/api/envoy/cds.yaml:/etc/envoy/cds.yaml:ro
+      # O cds.yaml oficial entra INTACTO como cds.src.yaml; a entrada abaixo
+      # grava /etc/envoy/cds.yaml com os apelidos imobcrm-* e só então chama a
+      # entrada oficial do Supabase.
+      - ./infra/dokploy/supabase/api/envoy/cds.yaml:/etc/envoy/cds.src.yaml:ro
+      - ./infra/dokploy/gateway-entrypoint.sh:/gateway-entrypoint.sh:ro
       - ./infra/dokploy/supabase/api/envoy/lds.template.yaml:/etc/envoy/lds.template.yaml:ro
       - ./infra/dokploy/supabase/api/envoy/docker-entrypoint.sh:/docker-entrypoint.sh:ro
     environment:
@@ -310,7 +447,7 @@ services:
       SUPABASE_PUBLIC_URL: https://${DOMAIN}
       DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-supabase}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?defina DASHBOARD_PASSWORD}
-    entrypoint: ["/bin/sh", "/docker-entrypoint.sh"]
+    entrypoint: ["/bin/sh", "/gateway-entrypoint.sh"]
     labels:
       traefik.enable: "true"
       traefik.docker.network: "${TRAEFIK_NETWORK:-dokploy-network}"
@@ -325,30 +462,45 @@ services:
   # ════════════════════════════════ CRM ═════════════════════════════════════
   # Roda a cada deploy e sai: schema (baseline.sql) e primeiro administrador.
   setup:
-    image: postgres:17-alpine
+    # Tag com a versão do Alpine: `17.6-alpine` sozinha é republicada quando o
+    # Alpine sobe, e o mesmo deploy passaria a rodar outra imagem.
+    image: postgres:17.6-alpine3.22
     restart: "no"
+    mem_limit: 256m
+    # O baseline cria buckets e policies em `storage.`: o schema tem de existir
+    # antes, e quem o cria são as migrations do próprio storage na partida dele.
     depends_on:
       db:
         condition: service_healthy
       auth:
         condition: service_healthy
+      rest:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
     entrypoint: ["/bin/sh", "/primeira-instalacao.sh"]
     volumes:
       - ./infra/dokploy/primeira-instalacao.sh:/primeira-instalacao.sh:ro
+      # Só é lido com BASELINE_FONTE=clone (desenvolvimento/teste). O padrão é
+      # baixar o baseline da tag v${IMAGE_TAG}, o MESMO schema das imagens do
+      # app — o clone é a ponta da branch, que pode estar em outra versão.
       - ./supabase/baseline.sql:/baseline.sql:ro
     environment:
-      DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
-      AUTH_URL: http://auth:9999
+      IMAGE_TAG: ${IMAGE_TAG:?defina IMAGE_TAG com uma versão publicada, ex. 1.57.0 (docs/imobiliario/03-instalacao-vps-dokploy.md)}
+      BASELINE_FONTE: ${BASELINE_FONTE:-versao}
+      DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
+      AUTH_URL: http://imobcrm-auth:9999
       SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
       OWNER_EMAIL: ${OWNER_EMAIL:?defina OWNER_EMAIL}
-      OWNER_PASSWORD: ${OWNER_PASSWORD:?defina OWNER_PASSWORD}
+      # Só é exigida enquanto o administrador não existe (o setup confere).
+      OWNER_PASSWORD: ${OWNER_PASSWORD:-}
       APP_LOCALE: ${APP_LOCALE:-pt-BR}
       NUVEMSHOP_OAUTH_ENCRYPTION_KEY: ${NUVEMSHOP_OAUTH_ENCRYPTION_KEY}
     logging: *default-logging
 
   app:
-    image: ghcr.io/renoribeiro/deskcommcrm:${IMAGE_TAG:-stable}
-    pull_policy: always
+    image: ghcr.io/renoribeiro/deskcommcrm:${IMAGE_TAG:?defina IMAGE_TAG com uma versão publicada, ex. 1.57.0 (docs/imobiliario/03-instalacao-vps-dokploy.md)}
+    pull_policy: missing
     restart: unless-stopped
     mem_limit: 768m
     depends_on:
@@ -361,7 +513,8 @@ services:
     environment:
       <<: *crm-env
     networks:
-      default: {}
+      default:
+        aliases: [imobcrm-app]
       dokploy:
     healthcheck:
       test: ["CMD", "node", "-e", "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
@@ -380,7 +533,10 @@ services:
       traefik.http.services.imob.loadbalancer.server.port: "3000"
       traefik.http.middlewares.imob-compress.compress: "true"
       # O webhook GLOBAL do WAHA só pode ser chamado de dentro (o WAHA fala com
-      # http://app:3000). Por fora ele é negado — o mesmo que o Caddyfile faz.
+      # http://imobcrm-app:3000). Pelo Traefik ele é negado — o mesmo que o
+      # Caddyfile faz. Limite conhecido: um contêiner de OUTRO sistema na
+      # dokploy-network alcança o app direto, sem passar pelo Traefik; o que
+      # fecha essa porta é WAHA_WEBHOOK_REQUIRE_SIGNATURE=true, que exige WAHA Plus.
       traefik.http.routers.imob-waha-block.rule: "Host(`${DOMAIN}`) && Path(`/api/v1/webhooks/waha`)"
       traefik.http.routers.imob-waha-block.entrypoints: "${TRAEFIK_ENTRYPOINT:-websecure}"
       traefik.http.routers.imob-waha-block.tls.certresolver: "${TRAEFIK_CERTRESOLVER:-letsencrypt}"
@@ -397,10 +553,13 @@ services:
     logging: *default-logging
 
   worker:
-    image: ghcr.io/renoribeiro/deskcomm-worker:${IMAGE_TAG:-stable}
-    pull_policy: always
+    image: ghcr.io/renoribeiro/deskcomm-worker:${IMAGE_TAG:?defina IMAGE_TAG com uma versão publicada, ex. 1.57.0 (docs/imobiliario/03-instalacao-vps-dokploy.md)}
+    pull_policy: missing
     restart: unless-stopped
     mem_limit: 512m
+    networks:
+      default:
+        aliases: [imobcrm-worker]
     depends_on:
       setup:
         condition: service_completed_successfully
@@ -415,24 +574,32 @@ services:
     logging: *default-logging
 
   scheduler:
-    image: ghcr.io/renoribeiro/deskcomm-scheduler:${IMAGE_TAG:-stable}
-    pull_policy: always
+    image: ghcr.io/renoribeiro/deskcomm-scheduler:${IMAGE_TAG:?defina IMAGE_TAG com uma versão publicada, ex. 1.57.0 (docs/imobiliario/03-instalacao-vps-dokploy.md)}
+    pull_policy: missing
     restart: unless-stopped
+    mem_limit: 128m
+    networks:
+      default:
+        aliases: [imobcrm-scheduler]
     depends_on:
       app:
         condition: service_healthy
     environment:
       TZ: UTC
       INTERNAL_SECRET: ${INTERNAL_SECRET}
+      SCHEDULER_APP_ORIGIN: http://imobcrm-app:3000
     logging: *default-logging
 
   waha:
     image: devlikeapro/waha:latest-2026.7.2
     restart: unless-stopped
     mem_limit: 1280m
+    networks:
+      default:
+        aliases: [imobcrm-waha]
     environment:
       WAHA_API_KEY: "sha512:${WAHA_API_KEY_SHA512:?defina WAHA_API_KEY_SHA512}"
-      WHATSAPP_HOOK_URL: http://app:3000/api/v1/webhooks/waha
+      WHATSAPP_HOOK_URL: http://imobcrm-app:3000/api/v1/webhooks/waha
       WHATSAPP_HOOK_EVENTS: "message.any,message.ack,message.edited,message.revoked,session.status,state.change"
       WHATSAPP_HOOK_HMAC: ${WAHA_HMAC_SECRET}
       WHATSAPP_DEFAULT_ENGINE: NOWEB
@@ -444,9 +611,17 @@ services:
     logging: *default-logging
 
   redis:
-    image: redis:7-alpine
+    # Versão completa (patch + Alpine): `7-alpine` flutua dentro do major, e
+    # dependência upstream vai com tag fixa (docs/doctrine/packaging.md).
+    image: redis:7.4.11-alpine3.21
     restart: unless-stopped
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    mem_limit: 192m
+    networks:
+      default:
+        aliases: [imobcrm-redis]
+    # Só contadores de limite de uso e filas leves: sem disco, com teto, e
+    # descartando o mais antigo quando enche — nunca recusando escrita.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 30s
@@ -457,10 +632,14 @@ services:
   srh:
     image: hiett/serverless-redis-http@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150
     restart: unless-stopped
+    mem_limit: 128m
+    networks:
+      default:
+        aliases: [imobcrm-srh]
     environment:
       SRH_MODE: env
       SRH_TOKEN: ${SRH_TOKEN}
-      SRH_CONNECTION_STRING: "redis://redis:6379"
+      SRH_CONNECTION_STRING: "redis://imobcrm-redis:6379"
     depends_on:
       redis:
         condition: service_healthy

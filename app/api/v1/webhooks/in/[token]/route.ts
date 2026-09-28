@@ -125,14 +125,34 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
   };
 
   const sigHeader = req.headers.get("x-deskcomm-signature");
-  // secret cifrado at-rest (migration 0041). Decrypt falhou (chave da GUC
-  // ausente/trocada)? Precedente WAHA: pula a validação em vez de derrubar a
-  // captação — secret aqui é defesa opcional, não gate de disponibilidade.
+  // secret cifrado at-rest (migration 0041).
+  //
+  // Decrypt falhou (chave da GUC ausente/trocada)? FALHA FECHADA (auditoria
+  // P8, `docs/imobiliario/04-auditoria-seguranca-e-qualidade.md`). Antes o
+  // evento era ACEITO sem conferir a assinatura: justamente a fonte cujo dono
+  // pediu assinatura virava a que aceita qualquer um enquanto a chave estivesse
+  // indisponível. 503 é o desfecho honesto — a ferramenta de formulário
+  // re-tenta 5xx sozinha, e o lead entra quando a chave voltar; o registro de
+  // captação mostra ao dono por que não entrou.
   let sourceSecret: string | null = null;
-  let hmacSkipped = false;
   if (source.secret_encrypted) {
     sourceSecret = await decryptWebhookSecret(admin, source.secret_encrypted as unknown as string);
-    if (sourceSecret === null) hmacSkipped = true;
+    if (sourceSecret === null) {
+      logger.error("[webhooks/in] segredo da fonte não decifrou; evento recusado (503)", {
+        webhook_source_id: source.id,
+        requestId,
+      });
+      await registrarCaptacao(admin, {
+        ...fonteDaCaptacao,
+        ...origemDaCaptacao,
+        outcome: "recusado",
+        rejectReason: "segredo_indisponivel",
+      });
+      return fail("service_unavailable", "webhook_secret_unavailable", 503, {
+        requestId,
+        headers: { "Retry-After": "60" },
+      });
+    }
   }
   const validSignature = sourceSecret ? verifyInboundSignature(rawBody, sigHeader, sourceSecret) : null;
   if (sourceSecret && !validSignature) {
@@ -167,10 +187,10 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
     raw_body: rawBody,
     payload_parsed: payload,
     signature_header: sigHeader ?? null,
-    // hmacSkipped (decrypt indisponível) conta como "não validado mas aceito",
-    // igual ao webhook WAHA — o feed da UI não pinta de vermelho.
+    // Fonte sem segredo: `null` → não havia o que validar, e o feed não pinta
+    // de vermelho. (Segredo que não decifra já foi recusado acima com 503.)
     valid_signature: validSignature ?? true,
-    event_type: hmacSkipped ? "lead_capture.received_hmac_skipped" : "lead_capture.received",
+    event_type: "lead_capture.received",
     external_id: null,
     status: "received",
     attempts: 0,

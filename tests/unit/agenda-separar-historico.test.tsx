@@ -321,32 +321,13 @@ describe("histórico da agenda — a repartição nas quatro abas", () => {
   });
 
   /**
-   * CATRACA — defeito medido, não teste desligado.
-   *
-   * `separar()` decide "passado" por `isBefore(comeca, agora)`, e só olha o
-   * COMEÇO. Uma consulta que começou às 14h32, dura 30 minutos e está
-   * ACONTECENDO às 14h37 é classificada como passada. Consequências, as duas
-   * na mesma linha:
-   *
-   *   1. ela some de "Próximos" no minuto em que começa — quem abre a tela
-   *      durante o atendimento não vê o que está em curso;
-   *   2. ela aparece em "Passados" oferecendo "Realizado" e "Faltou" (decisão
-   *      17) enquanto a pessoa ainda está na sala: o produto pergunta se
-   *      aconteceu antes de ter acontecido, e "Faltou" clicado ali é falta
-   *      registrada em cima de quem compareceu.
-   *
-   * O resto da casa já trata o compromisso como ocupado até `termina` — a
-   * consulta de sobreposição de `lib/agenda/consulta.ts` filtra por
-   * `starts_at < ate AND ends_at > de`. Aqui `termina` não é lido.
-   *
-   * UMA asserção só, e é deliberado: `it.fails` é satisfeito pela PRIMEIRA que
-   * falha, então asserção extra seria letra morta enquanto o defeito existir, e
-   * estrearia sem cobertura no dia do conserto.
-   *
-   * No dia em que a fronteira passar a olhar `termina`, este caso REPROVA por
-   * ter passado, e quem consertar é obrigado a vir tirar o `.fails`.
+   * Era uma CATRACA (`it.fails`) até 27/09/2026: `separar()` decidia "passado"
+   * por `isBefore(comeca, agora)` e mandava para Passados — oferecendo
+   * "Realizado" e "Faltou" — um compromisso que ainda estava acontecendo. O
+   * conserto passa a olhar `termina`, a mesma régua da consulta de sobreposição
+   * de `lib/agenda/consulta.ts`. O controle positivo acima continua valendo.
    */
-  it.fails("o compromisso EM ANDAMENTO ainda é Próximos — começou, mas não terminou", () => {
+  it("o compromisso EM ANDAMENTO ainda é Próximos — começou, mas não terminou", () => {
     montar([ag("em-andamento", -5, { duracao: 30 })]);
 
     expect(

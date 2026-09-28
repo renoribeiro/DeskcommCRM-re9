@@ -189,7 +189,8 @@ export function JanelaFechadaAviso({
         template_language: atual.language,
         // ─── O `body` NÃO é decorativo: sem ele o envio nem sai ──────────────
         //
-        // `sendMessageSchema` exige `body`, `media_url` ou `media_storage_path`.
+        // `sendMessageSchema` exige `body` ou `media_storage_path` (`media_url` do
+        // cliente é recusada desde a auditoria P1).
         // A primeira versão desta tela mandava só o nome do modelo, e o pedido
         // morria em 422 ANTES de tocar o transporte — o seletor aparecia, o
         // operador escolhia, e nada acontecia. Com a janela fechada esta é a

@@ -139,7 +139,6 @@ export function configuracaoDoAmbiente(urlDaAplicacao?: string): AppDoGoogleConf
 const TTL_MS = 30_000;
 
 declare global {
-  // eslint-disable-next-line no-var
   var __memoDoAppDoGoogle: { readonly valor: LinhaDoApp | null; readonly expiraEm: number } | null | undefined;
 }
 

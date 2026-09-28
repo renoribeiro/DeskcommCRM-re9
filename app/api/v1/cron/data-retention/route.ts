@@ -83,6 +83,7 @@ import {
   type ClienteDaCascata,
   type ResultadoDaVarredura,
 } from "@/lib/lgpd/cascata";
+import { PREFIXO_DO_TOKEN_EFEMERO } from "@/lib/ai/runtime/mcp_token";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -433,6 +434,107 @@ export async function podarHistorico(
   };
 }
 
+// ─── A poda dos tokens efêmeros do agente (A5) ──────────────────────────────
+//
+// Cada turno do agente grava uma linha em `api_tokens` (`agent-run:<run>`,
+// `lib/ai/runtime/mcp_token.ts`) que vale 5 minutos e nunca era apagada.
+//
+// ⚠️ A trava que decide O QUE pode sair: `api_audit_log.actor_api_token_id`
+// é `ON DELETE SET NULL`. Apagar um token citado pela auditoria REESCREVERIA
+// linhas de auditoria — a ação regravada do sistema, sem quem a fez —, e a
+// auditoria é append-only por doutrina (CLAUDE.md, "Audit log"; migration
+// 0258). A ação referencial roda como dono da tabela, então o REVOKE de
+// UPDATE dos papéis do PostgREST não a impede: quem impede é esta poda não
+// escolher esses tokens. Idem `conversation_drafts.created_by_api_token_id`:
+// apagar trocaria a autoria de um rascunho por nulo.
+//
+// Então só sai token efêmero, VENCIDO há mais de um dia, que NENHUMA linha de
+// auditoria nem rascunho cita (anti-join no embed com `is null`). O citado fica
+// para sempre, como a auditoria que o cita; ele não pesa na tela (a listagem o
+// exclui) nem no teto de tokens ativos (está vencido).
+//
+// Para que "citado" seja exceção, e não todo token: a auditoria das tools
+// chamadas pelo agente grava o efêmero só em `metadata.actor_api_token_id`,
+// nunca na coluna com FK (`tokenNaAuditoria`, `lib/mcp/audit.ts`). Enquanto
+// gravava na coluna, todo turno citava o seu token e esta poda não apagava
+// nenhum. Rascunho criado pelo agente (`crm_create_conversation_draft`) ainda
+// cita o token e o mantém — é raro, e a autoria do rascunho é o dado.
+//
+// Custo: o anti-join consulta `api_audit_log` por `actor_api_token_id` — é o
+// índice dessa FK (B5 da auditoria de 2026-09) que o torna barato. O lote é
+// curto e o número de lotes, pequeno, para a rodada nunca segurar o cron.
+
+/** Folga depois do vencimento: um token recém-vencido pode ter auditoria em voo. */
+export const TOKENS_EFEMEROS_FOLGA_DIAS = 1;
+export const LOTE_DE_TOKENS = 200;
+export const MAX_LOTES_DE_TOKENS = 5;
+
+export interface PodaDeTokensDb {
+  /** Apaga até `lote` tokens efêmeros vencidos antes do corte e não citados; devolve a contagem. */
+  apagarTokensEfemeros(
+    vencidosAntesDe: string,
+    lote: number,
+  ): Promise<{ data: number | null; error: { message: string } | null }>;
+}
+
+export async function podarTokensEfemeros(
+  db: PodaDeTokensDb,
+  agora: Date = new Date(),
+): Promise<{ apagados: number; lotes: number; temResto: boolean }> {
+  const corte = new Date(agora.getTime() - TOKENS_EFEMEROS_FOLGA_DIAS * 86_400_000).toISOString();
+  let apagados = 0;
+  let lotes = 0;
+  for (let i = 0; i < MAX_LOTES_DE_TOKENS; i += 1) {
+    const { data, error } = await db.apagarTokensEfemeros(corte, LOTE_DE_TOKENS);
+    if (error) throw new Error(`api_tokens (efêmeros): ${error.message}`);
+    const n = data ?? 0;
+    lotes += 1;
+    apagados += n;
+    if (n < LOTE_DE_TOKENS) return { apagados, lotes, temResto: false };
+  }
+  return { apagados, lotes, temResto: true };
+}
+
+/**
+ * A implementação real sobre o admin client. Exportada para o teste conferir o
+ * FILTRO — é nele que mora a garantia de não reescrever auditoria.
+ */
+export function podaDeTokensSobre(admin: {
+  from: (tabela: string) => unknown;
+}): PodaDeTokensDb {
+  return {
+    async apagarTokensEfemeros(vencidosAntesDe, lote) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- builder do PostgREST, tipado à parte
+      const q = (admin.from("api_tokens") as any)
+        .select("id, api_audit_log(id), conversation_drafts(id)")
+        .like("name", `${PREFIXO_DO_TOKEN_EFEMERO}%`)
+        .contains("scopes", JSON.stringify(["actor:ai_agent"]))
+        .lt("expires_at", vencidosAntesDe)
+        .is("api_audit_log", null)
+        .is("conversation_drafts", null)
+        .limit(1, { referencedTable: "api_audit_log" })
+        .limit(1, { referencedTable: "conversation_drafts" })
+        .order("id")
+        .limit(lote);
+      const { data: candidatos, error } = (await q) as {
+        data: Array<{ id: string }> | null;
+        error: { message: string } | null;
+      };
+      if (error) return { data: null, error };
+      const ids = (candidatos ?? []).map((c) => c.id);
+      if (ids.length === 0) return { data: 0, error: null };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- idem
+      const { data: apagados, error: erroDoDelete } = (await (admin.from("api_tokens") as any)
+        .delete()
+        .in("id", ids)
+        .like("name", `${PREFIXO_DO_TOKEN_EFEMERO}%`)
+        .lt("expires_at", vencidosAntesDe)
+        .select("id")) as { data: unknown[] | null; error: { message: string } | null };
+      return { data: Array.isArray(apagados) ? apagados.length : null, error: erroDoDelete };
+    },
+  };
+}
+
 /**
  * A rodada mexeu em alguma coisa? É o que decide se ela ocupa uma linha de
  * auditoria. Exportada para o teste medir as DUAS direções — "não audita quando
@@ -490,6 +592,11 @@ async function handle(req: NextRequest): Promise<Response> {
   }
 
   let resultado: ResultadoDaRetencao;
+  let tokens: { apagados: number; lotes: number; temResto: boolean; falha?: string } = {
+    apagados: 0,
+    lotes: 0,
+    temResto: false,
+  };
   let varredura: ResultadoDaVarredura = {
     examinados: 0,
     comResiduo: 0,
@@ -558,6 +665,13 @@ async function handle(req: NextRequest): Promise<Response> {
     } catch (err) {
       varredura.falhas.push(err instanceof Error ? err.message : String(err));
     }
+    // Try próprio, pelo mesmo motivo da varredura acima: a poda de tokens
+    // falhar não pode apagar o relatório das outras.
+    try {
+      tokens = await podarTokensEfemeros(podaDeTokensSobre(admin));
+    } catch (err) {
+      tokens.falha = err instanceof Error ? err.message : String(err);
+    }
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     logger.error("[data-retention] poda falhou", { error: detail, requestId });
@@ -584,12 +698,20 @@ async function handle(req: NextRequest): Promise<Response> {
   // Ver o cabeçalho: rodada que não apagou nada não é mutação. E rodada que
   // apagou SEMPRE deixa rastro — é isto que impede o expurgo do audit de ser
   // encolhimento silencioso da trilha.
-  if (houveEfeito(resultado)) {
+  if (tokens.falha) {
+    logger.error("[data-retention] poda de tokens efêmeros falhou", { falha: tokens.falha, requestId });
+  }
+
+  if (houveEfeito(resultado) || tokens.apagados > 0) {
     void audit({
       action: "retention.sweep_run",
       organizationId: null,
       bypassedRls: true,
-      metadata: resultado as unknown as Record<string, unknown>,
+      metadata: {
+        ...(resultado as unknown as Record<string, unknown>),
+        tokens_efemeros_apagados: tokens.apagados,
+        tokens_efemeros_tem_resto: tokens.temResto,
+      },
       requestId,
     });
   }
@@ -631,6 +753,8 @@ async function handle(req: NextRequest): Promise<Response> {
       anonimizacoes_examinadas: varredura.examinados,
       anonimizacoes_completadas: varredura.completados.length,
       anonimizacoes_tem_resto: varredura.temResto,
+      tokens_efemeros_apagados: tokens.apagados,
+      tokens_efemeros_tem_resto: tokens.temResto,
     },
     { requestId },
   );

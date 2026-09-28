@@ -19,6 +19,7 @@ import { z } from "zod";
 
 import { runAgent } from "@/lib/ai/runtime/agent";
 import { ok, fail } from "@/lib/api/wrappers";
+import { timingSafeStringEqual } from "@/lib/auth/cron-auth";
 import { env } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
@@ -36,24 +37,21 @@ const bodySchema = z.object({
     .optional(),
 });
 
-function timingSafeEq(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < a.length; i++) {
-    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return mismatch === 0;
-}
-
+/**
+ * Comparação pelo helper compartilhado (auditoria P10): a versão à mão daqui
+ * saía cedo quando os tamanhos diferiam — o tempo de resposta contava o tamanho
+ * do segredo. `timingSafeStringEqual` compara os SHA-256 dos dois lados, de
+ * tamanho fixo.
+ */
 function authorize(req: NextRequest): boolean {
   const expected = env.INTERNAL_SECRET;
   if (!expected) return false;
   const headerSecret = req.headers.get("x-internal-secret");
-  if (headerSecret && timingSafeEq(headerSecret, expected)) return true;
+  if (headerSecret && timingSafeStringEqual(headerSecret, expected)) return true;
   const authz = req.headers.get("authorization");
   if (authz) {
     const match = /^Bearer\s+(.+)$/i.exec(authz.trim());
-    if (match && timingSafeEq(match[1]!.trim(), expected)) return true;
+    if (match && timingSafeStringEqual(match[1]!.trim(), expected)) return true;
   }
   return false;
 }

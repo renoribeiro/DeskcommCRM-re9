@@ -7,17 +7,26 @@
  * audit FK (`api_audit_log.actor_api_token_id`) and provide a real handle for
  * downstream tracing.
  *
- * `created_by` is required by the schema. Resolution order:
+ * `created_by` is required by the schema. Resolution order (active members
+ * only — see `resolveCreatedBy`):
  *   1. version.created_by (passed by the caller)
  *   2. agent.created_by (passed by the caller)
- *   3. first admin in user_organizations for the org
+ *   3. the highest-ranked active member of the org
  * If none, throws — runtime aborts with `error_code='no_actor_user'`.
  */
 import { createHash, randomBytes } from "node:crypto";
 
+import { ROLE_RANK, type Role } from "@/lib/auth/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const EPHEMERAL_TOKEN_TTL_SEC = 300;
+
+/**
+ * O nome de todo token efêmero começa assim (`agent-run:<runId>`). É por ele
+ * que a listagem de chaves os exclui e a poda diária os encontra; uma pessoa
+ * não pode criar token com esse nome (`lib/schemas/team.ts`).
+ */
+export const PREFIXO_DO_TOKEN_EFEMERO = "agent-run:";
 
 export interface MintEphemeralTokenInput {
   readOnly?: boolean;
@@ -65,22 +74,40 @@ export function buildEphemeralPrefix(runId: string): string {
   return `dsk_run_${runId.slice(0, 8)}_${randomBytes(4).toString("hex")}`;
 }
 
-async function resolveCreatedBy(
+/**
+ * Quem assina o token efêmero (`api_tokens.created_by`, `not null`).
+ *
+ * Só vale MEMBRO ATIVO da organização: `lib/mcp/auth.ts` recusa token cujo
+ * criador saiu (`user_organizations.revoked_at`), então assinar com o autor de
+ * uma versão que já deixou a empresa faria o turno inteiro ficar sem
+ * ferramentas. Os candidatos (autor da versão, autor do agente) valem na
+ * ordem, se ainda forem membros; senão, o membro ativo de papel MAIS ALTO.
+ *
+ * O desempate é pelo RANK do papel, nunca pelo texto: `order("role", desc)`
+ * ordenava alfabeticamente (`viewer` > `manager` > `agent` > `admin`) e
+ * escolhia justamente o papel mais baixo. Exportada para teste.
+ */
+export async function resolveCreatedBy(
   organizationId: string,
   ...candidates: Array<string | null | undefined>
 ): Promise<string | null> {
-  for (const c of candidates) {
-    if (c) return c;
-  }
   const admin = createAdminClient();
-  const { data } = await admin
+  const { data, error } = await admin
     .from("user_organizations")
     .select("user_id, role")
     .eq("organization_id", organizationId)
-    .order("role", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return (data?.user_id as string | undefined) ?? null;
+    .is("revoked_at", null);
+  if (error) return null;
+  const membros = ((data ?? []) as Array<{ user_id: string; role: string }>).filter(
+    (m) => typeof m.user_id === "string",
+  );
+  const ativos = new Set(membros.map((m) => m.user_id));
+  for (const c of candidates) {
+    if (c && ativos.has(c)) return c;
+  }
+  const rank = (papel: string) => ROLE_RANK[papel as Role] ?? 0;
+  const maisAlto = [...membros].sort((a, b) => rank(b.role) - rank(a.role))[0];
+  return maisAlto?.user_id ?? null;
 }
 
 export async function mintEphemeralToken(input: MintEphemeralTokenInput): Promise<EphemeralToken> {
@@ -106,7 +133,7 @@ export async function mintEphemeralToken(input: MintEphemeralTokenInput): Promis
     .insert({
       organization_id: input.organizationId,
       created_by: createdBy,
-      name: `agent-run:${input.runId}`,
+      name: `${PREFIXO_DO_TOKEN_EFEMERO}${input.runId}`,
       prefix,
       token_hash: `\\x${tokenHash.toString("hex")}`,
       scopes: [

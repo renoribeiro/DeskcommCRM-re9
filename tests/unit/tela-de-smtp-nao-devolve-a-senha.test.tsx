@@ -45,6 +45,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import Page from "@/app/admin/(protected)/email/page";
+import { env } from "@/lib/env";
 import { FormularioDeSmtp } from "@/app/admin/(protected)/email/_form";
 
 beforeEach(() => {
@@ -121,6 +122,25 @@ describe("/admin/email — o que a página entrega ao navegador", () => {
     resendLigada = true;
 
     expect((await propsDaPagina()).transporte).toBe("resend");
+  });
+
+  it("instalação pelo Dokploy: avisa que o e-mail do login vem do Environment, e a senha segue sem atravessar", async () => {
+    // A página lê `env` (lib/env.ts), validado no import: mexer em
+    // process.env aqui não chegaria a ela.
+    const anterior = env.DEPLOY_MODE;
+    env.DEPLOY_MODE = "dokploy";
+    try {
+      const elemento = (await Page()) as unknown as {
+        props: { children: Array<{ type: unknown; props: Record<string, unknown> }> };
+      };
+      const [aviso, formulario] = elemento.props.children;
+      if (!aviso || !formulario) throw new Error("a página não devolveu aviso + formulário");
+      expect(formulario.type).toBe(FormularioDeSmtp);
+      expect(JSON.stringify(formulario.props)).not.toContain(SENHA_EM_CLARO);
+      expect(JSON.stringify(aviso.props)).toContain("aba Environment do serviço no Dokploy");
+    } finally {
+      env.DEPLOY_MODE = anterior;
+    }
   });
 
   it("quem não é dono da instalação não vê a tela", async () => {

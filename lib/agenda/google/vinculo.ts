@@ -48,6 +48,7 @@
  * servidor, e quem o tem já não precisa deste ataque.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { chaveDoEstadoOAuth } from "@/lib/auth/chave-do-estado-oauth";
 
 /**
  * O nome não cita o provedor NEM o produto, e as duas restrições são de gates
@@ -73,7 +74,9 @@ export const VALIDADE_DO_VINCULO_S = 10 * 60;
  * que trafega.
  */
 export function assinarVinculo(nonce: string, segredo: string): string {
-  return createHmac("sha256", segredo).update(nonce, "utf8").digest("base64url");
+  // Chave derivada, nunca o segredo cru (auditoria P7). Ver
+  // `lib/auth/chave-do-estado-oauth.ts`.
+  return createHmac("sha256", chaveDoEstadoOAuth(segredo)).update(nonce, "utf8").digest("base64url");
 }
 
 /**

@@ -9,6 +9,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import type { LanguageModel } from 'ai';
 import { MockLanguageModelV3 } from 'ai/test';
 
+import { fetchComTetoPorRequisicao } from '@/lib/ai/tempo-da-chamada';
 import { fetchParaDestinoDaOrganizacao } from '@/lib/automation/destinos-internos-autorizados';
 
 import { allowlistedFetch, buildAllowlist } from '../egress';
@@ -231,8 +232,17 @@ export function createDefaultRegistry(opts?: {
   deepseekThinking?: RaciocinioDeepseek;
   /** Knob OPENAI_REASONING_EFFORT; ausente = lido do ambiente. `null` = não injeta. */
   openaiReasoningEffort?: EsforcoDeRaciocinioOpenAI | null;
+  /**
+   * Teto de UMA requisição HTTP ao provedor (knob `LLM_CALL_TIMEOUT_MS`).
+   * Ausente = lido do ambiente. Vai no `fetch` de toda fábrica, por fora de
+   * tudo (régua de destino e allowlist inclusive): cada passo de um turno tem o
+   * seu teto, e as ferramentas entre os passos não o consomem.
+   */
+  llmCallTimeoutMs?: number;
 }): ProviderRegistry {
   const extra = opts?.allowedHosts ?? [];
+  const comTeto = (interno: typeof fetch): typeof fetch =>
+    fetchComTetoPorRequisicao(interno, opts?.llmCallTimeoutMs);
   const esforcoOpenAI =
     opts?.openaiReasoningEffort !== undefined ? opts.openaiReasoningEffort : esforcoDeRaciocinioOpenAI();
   const contain = (endpoint: string): typeof fetch => {
@@ -242,19 +252,28 @@ export function createDefaultRegistry(opts?: {
       return allowlistedFetch(url, init, { allowlist: allow });
     };
   };
+  /**
+   * Endereço do PAINEL (escolha de uma organização) passa pela régua de destino
+   * a cada chamada, além da allowlist (auditoria P4, `docs/imobiliario/04-…`):
+   * a allowlist vira a do próprio `baseUrl`, então sozinha ela AUTORIZAVA um
+   * `http://10.0.0.5` gravado no painel. Sem `baseUrl`, o endpoint é a constante
+   * do fabricante e só a allowlist vale — como antes.
+   */
+  const containDaOrganizacao = (baseUrl: string | undefined, endpoint: string): typeof fetch =>
+    baseUrl ? fetchParaDestinoDaOrganizacao(contain(endpoint)) : contain(endpoint);
   return {
     anthropic: (apiKey, modelId) =>
-      createAnthropic({ apiKey, fetch: contain(ANTHROPIC_ENDPOINT) })(modelId),
+      createAnthropic({ apiKey, fetch: comTeto(contain(ANTHROPIC_ENDPOINT)) })(modelId),
     openai: (apiKey, modelId) => {
       const contido = contain(OPENAI_ENDPOINT);
       const fetchFinal =
         esforcoOpenAI && modeloOpenAIRaciocina(modelId)
           ? comEsforcoDeRaciocinio(contido, esforcoOpenAI)
           : contido;
-      return createOpenAI({ apiKey, fetch: fetchFinal })(modelId);
+      return createOpenAI({ apiKey, fetch: comTeto(fetchFinal) })(modelId);
     },
     google: (apiKey, modelId) =>
-      createGoogleGenerativeAI({ apiKey, fetch: contain(GOOGLE_ENDPOINT) })(modelId),
+      createGoogleGenerativeAI({ apiKey, fetch: comTeto(contain(GOOGLE_ENDPOINT)) })(modelId),
     /**
      * O `baseUrl` do painel é honrado aqui, e a allowlist do egress passa a ser
      * a DELE — não a da OpenRouter mais um furo. Apontar para um gateway
@@ -268,7 +287,7 @@ export function createDefaultRegistry(opts?: {
         apiKey,
         baseURL: endpoint,
         headers: cabecalhosDeAtribuicaoOpenRouter(),
-        fetch: contain(endpoint),
+        fetch: comTeto(containDaOrganizacao(baseUrl, endpoint)),
       });
       // Chat Completions, NÃO Responses: a OpenRouter fala a API da OpenAI
       // (chat/completions). O `createOpenAI()(modelId)` desta versão do SDK usa
@@ -288,10 +307,10 @@ export function createDefaultRegistry(opts?: {
      */
     deepseek: (apiKey, modelId, baseUrl) => {
       const endpoint = baseUrl ?? DEEPSEEK_ENDPOINT;
-      const contido = contain(endpoint);
+      const contido = containDaOrganizacao(baseUrl, endpoint);
       const fetchFinal =
         opts?.deepseekThinking === 'disabled' ? comRaciocinioDesligado(contido) : contido;
-      return createOpenAI({ apiKey, baseURL: endpoint, fetch: fetchFinal })(modelId);
+      return createOpenAI({ apiKey, baseURL: endpoint, fetch: comTeto(fetchFinal) })(modelId);
     },
     /**
      * Requesty: roteador OpenAI-compatível, com `base_url` próprio pela mesma
@@ -301,7 +320,11 @@ export function createDefaultRegistry(opts?: {
      */
     requesty: (apiKey, modelId, baseUrl) => {
       const endpoint = baseUrl ?? REQUESTY_ENDPOINT;
-      return createOpenAI({ apiKey, baseURL: endpoint, fetch: contain(endpoint) }).chat(modelId);
+      return createOpenAI({
+        apiKey,
+        baseURL: endpoint,
+        fetch: comTeto(containDaOrganizacao(baseUrl, endpoint)),
+      }).chat(modelId);
     },
     /**
      * Provedor personalizado (#1642): o endpoint É DO OPERADOR e vem na
@@ -325,7 +348,7 @@ export function createDefaultRegistry(opts?: {
       return createOpenAI({
         apiKey,
         baseURL: baseUrl,
-        fetch: fetchParaDestinoDaOrganizacao(contain(baseUrl)),
+        fetch: comTeto(fetchParaDestinoDaOrganizacao(contain(baseUrl))),
       }).chat(modelId);
     },
   };

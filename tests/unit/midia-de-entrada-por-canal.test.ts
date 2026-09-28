@@ -138,7 +138,9 @@ describe("o que cada canal faz com a URL", () => {
     // O risco desta mudança é mexer no canal que funciona bem. Ele chama a
     // MESMA função, com os mesmos argumentos; só mudou quem a escolhe.
     const w = readFileSync("lib/channels/adapters/waha.ts", "utf8");
-    expect(w).toMatch(/return fetchWahaMedia\(input\.url, input\.hintMime \?\? null\)/);
+    // A sessão entra como terceiro argumento desde a auditoria P1 (o WAHA é
+    // compartilhado entre organizações; o caminho do arquivo traz a sessão).
+    expect(w).toMatch(/return fetchWahaMedia\(input\.url, input\.hintMime \?\? null, input\.sessionRef\)/);
   });
 
   it("os dois devolvem o MESMO tipo, reusado e não redefinido", () => {

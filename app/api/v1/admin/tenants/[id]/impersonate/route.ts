@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requirePlatformAdmin } from "@/lib/auth/requirePlatformAdmin";
+import { falhaDoGuardaDeAdmin } from "@/lib/auth/falha-do-guarda-de-admin";
 import { loadAuthUser, mfaEmDivida, resolveActiveOrg } from "@/lib/auth/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -20,7 +21,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!input.success) return fail("validation_failed", "Modo de acompanhamento inválido.", 422, { requestId });
   let ctx;
   try { ctx = await requirePlatformAdmin(); }
-  catch { return fail("forbidden", "Administração da plataforma necessária.", 403, { requestId }); }
+  catch (err) { return falhaDoGuardaDeAdmin(err, requestId); }
   if (await mfaEmDivida()) return fail("mfa_required", "Confirme a verificação em duas etapas.", 403, { requestId });
   if (!isImpersonateSecretReady()) return fail("upstream_unavailable", "Acompanhamento não configurado nesta instalação.", 503, { requestId });
   const user = await loadAuthUser();

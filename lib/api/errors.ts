@@ -257,6 +257,9 @@ export const ApiErrorCodes = {
   internal_error: "internal_error",
   upstream_unavailable: "upstream_unavailable",
   unavailable: "unavailable", // 503: dependência de config ausente (ex.: pool do engine sem SUPABASE_DB_URL)
+  // 503: a instalação não tem `CPF_ENCRYPTION_KEY` utilizável — o CPF não é
+  // gravado (nem só o hash, que violaria `contacts_cpf_consistency`).
+  cpf_encryption_unavailable: "cpf_encryption_unavailable",
   waha_error: "waha_error",
   wacalls_error: "wacalls_error", // 502: o serviço de chamada de voz recusou ou não respondeu
   wacalls_not_connected: "wacalls_not_connected", // 503 + Retry-After: sessão pareada cujo socket com o WhatsApp caiu por um instante (ver `wacallsSemConexao`)

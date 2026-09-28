@@ -48,7 +48,7 @@ import { findLgpdRequest } from "@/lib/lgpd/repository";
 // O patch em `patches/` conserta a dependência e continua valendo. Este import
 // tardio conserta a CAUSA: o laço deixa de depender de PDF para existir. Um
 // depende de o pnpm aplicar o patch em todo ambiente; o outro, não.
-import { signPdfPades, isPadesConfigured } from "@/lib/lgpd/pades-signer";
+import { signPdfPades, padesAssinaDeVerdade } from "@/lib/lgpd/pades-signer";
 import {
   EmailNotConfigured,
   EmailSendFailed,
@@ -171,10 +171,11 @@ export async function processLgpdExport(event: EventRow): Promise<HandlerResult>
       externalCustomerId: req.external_customer_id,
     });
 
-    // 4. Render PDF (with warning banner when unsigned).
-    const padesConfigured = isPadesConfigured();
+    // 4. Render PDF (with warning banner when unsigned). A faixa depende de o
+    // PDF sair ASSINADO, não de a chave existir: com a chave e sem o signatário
+    // implementado, omitir a faixa afirmaria uma assinatura que não houve.
     const { renderLgpdPdf } = await import("@/lib/lgpd/pdf-renderer");
-    const pdfBuffer = await renderLgpdPdf(data, { unsignedWarning: !padesConfigured });
+    const pdfBuffer = await renderLgpdPdf(data, { unsignedWarning: !padesAssinaDeVerdade() });
 
     // 5. Sign (stubbed when key missing).
     const signResult = await signPdfPades(pdfBuffer);

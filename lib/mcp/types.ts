@@ -23,6 +23,19 @@ export interface McpContext {
   role: Role;
   actor: Actor;
   apiTokenId: string;
+  /**
+   * `apiTokenId` é o token EFÊMERO do turno do agente (`agent-run:<run>`,
+   * `lib/ai/runtime/mcp_token.ts`). Só o runtime in-process marca — é ele que
+   * cunha o token, e o texto do token nunca sai do processo.
+   *
+   * Muda UMA coisa: a auditoria não grava o token na coluna com FK
+   * (`api_audit_log.actor_api_token_id`), só em `metadata.actor_api_token_id`.
+   * A poda de efêmeros (`app/api/v1/cron/data-retention`) não apaga token
+   * citado pela auditoria — apagar reescreveria a linha pelo `ON DELETE SET
+   * NULL` —, e como todo turno audita toda tool, NENHUM efêmero saía. Ver
+   * `tokenNaAuditoria` em `lib/mcp/audit.ts`.
+   */
+  tokenEfemero?: boolean;
   requestId: string;
   /** Service-role admin client. Tools devem filtrar `organization_id` em toda query. */
   supabase: SupabaseClient;

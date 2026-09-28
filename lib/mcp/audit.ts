@@ -3,7 +3,8 @@
  *
  * Spec 11 §6: cada tool call gera 1 entrada em `api_audit_log` com
  * `action='mcp.tool_called'`, `actor_type='ai_agent'` (quando aplicavel),
- * `actor_api_token_id=<token>`, `resource_type='mcp_tool'`, `resource_id=<tool_name>`.
+ * `actor_api_token_id=<token>` (o efêmero do agente só no metadata — ver
+ * `tokenNaAuditoria`), `resource_type='mcp_tool'`, `resource_id=<tool_name>`.
  *
  * Fire-and-forget: falha de write nunca bloqueia retorno da tool.
  */
@@ -54,6 +55,29 @@ function redactArgs(args: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
+/**
+ * Como o token de quem chamou entra numa linha de auditoria.
+ *
+ * Token comum (de pessoa ou de integração): na coluna `actor_api_token_id`, com
+ * FK — é o que liga a ação à chave, e a chave dura.
+ *
+ * Token EFÊMERO do turno do agente (`ctx.tokenEfemero`): só em
+ * `metadata.actor_api_token_id`. Ele vale 5 minutos e existe um por turno; a
+ * coluna com FK impedia a poda de apagá-lo (a poda não toca token citado pela
+ * auditoria, porque o `ON DELETE SET NULL` reescreveria a linha), e cada turno
+ * deixava uma linha em `api_tokens` para sempre. O vínculo com o turno não se
+ * perde: `metadata.actor_id` é o run, e o id do token segue no metadata.
+ */
+export function tokenNaAuditoria(ctx: Pick<McpContext, "apiTokenId" | "tokenEfemero">): {
+  actorApiTokenId: string | null;
+  metadata: Record<string, unknown>;
+} {
+  if (ctx.tokenEfemero) {
+    return { actorApiTokenId: null, metadata: { actor_api_token_id: ctx.apiTokenId } };
+  }
+  return { actorApiTokenId: ctx.apiTokenId, metadata: {} };
+}
+
 export async function auditMcpToolCall(input: AuditMcpToolCallInput): Promise<void> {
   const { ctx, toolName, args, durationMs, success, errorMessage, resultSummary, desfecho, motivo } =
     input;
@@ -74,6 +98,8 @@ export async function auditMcpToolCall(input: AuditMcpToolCallInput): Promise<vo
   if (ctx.actor.type === "ai_agent" && ctx.actor.api_token_id) {
     metadata.actor_api_token_id = ctx.actor.api_token_id;
   }
+  const token = tokenNaAuditoria(ctx);
+  Object.assign(metadata, token.metadata);
 
   await audit({
     action: "mcp.tool_called",
@@ -82,7 +108,8 @@ export async function auditMcpToolCall(input: AuditMcpToolCallInput): Promise<vo
     // como actorUserId estourava a FK api_audit_log_actor_user_id_fkey. O ator
     // já fica registrado em actorApiTokenId e em metadata.actor_id.
     actorUserId: null,
-    actorApiTokenId: ctx.apiTokenId,
+    // Token efêmero do agente: só no metadata (ver `tokenNaAuditoria`).
+    actorApiTokenId: token.actorApiTokenId,
     organizationId: ctx.organizationId,
     resourceType: "mcp_tool",
     // `resource_id` é uuid no banco; o nome da tool ia aqui como texto e o

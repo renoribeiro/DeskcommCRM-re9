@@ -62,7 +62,23 @@ function bancoFalso(resultado: { data: unknown; error: { message: string } | nul
       },
     },
   ) as never;
-  vi.mocked(createAdminClient).mockReturnValue({ from: () => cadeia } as never);
+  // Quem criou o token segue membro ativo (A4) — este arquivo mede o teto de
+  // falhas, não a filiação.
+  const filiacao = new Proxy(
+    {},
+    {
+      get(_alvo, prop) {
+        if (prop === "then") {
+          return (resolve: (v: unknown) => unknown) =>
+            resolve({ data: { role: "admin" }, error: null });
+        }
+        return () => filiacao;
+      },
+    },
+  ) as never;
+  vi.mocked(createAdminClient).mockReturnValue({
+    from: (tabela: string) => (tabela === "user_organizations" ? filiacao : cadeia),
+  } as never);
 }
 
 /** Linha de `api_tokens` como o lookup devolve (schema real, token morto ou vivo). */

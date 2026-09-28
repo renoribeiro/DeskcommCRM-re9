@@ -35,18 +35,30 @@ import { carregarRosterDeAtendimento, podeAssumirAgora } from "@/lib/escalacao/a
 import { lerChamado, listarChamados } from "@/lib/escalacao/chamados";
 import { lerContinuidadeHumana } from "@/lib/escalacao/continuidade";
 import { devolverAtendimentoAoAgente } from "@/lib/escalacao/retomada";
+import { tokenNaAuditoria } from "../audit";
 import type { McpContext, McpToolDefinition } from "../types";
 
 /** Payload de auditoria a partir do ator do ctx (mesma forma de governance.ts). */
 function actorAudit(ctx: McpContext): {
   actorUserId: string | null;
+  /** Token de quem chamou — nulo quando é o efêmero do agente (ver `tokenNaAuditoria`). */
+  actorApiTokenId: string | null;
   metadataActor: Record<string, unknown>;
 } {
+  const token = tokenNaAuditoria(ctx);
   const actor = ctx.actor;
   if (actor.type === "user") {
-    return { actorUserId: actor.id, metadataActor: { actor_type: "user" } };
+    return {
+      actorUserId: actor.id,
+      actorApiTokenId: token.actorApiTokenId,
+      metadataActor: { actor_type: "user", ...token.metadata },
+    };
   }
-  return { actorUserId: null, metadataActor: { actor_type: actor.type, actor_id: actor.id } };
+  return {
+    actorUserId: null,
+    actorApiTokenId: token.actorApiTokenId,
+    metadataActor: { actor_type: actor.type, actor_id: actor.id, ...token.metadata },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +130,7 @@ export const crmListAvailableAttendants: McpToolDefinition<typeof atendentesInpu
 const listaChamadosInputShape = {
   state: z.enum(["abertos", "fechados"]).default("abertos"),
   limit: z.number().int().min(1).max(50).default(20),
+  contact_id: z.string().uuid().optional().describe("Só os casos das conversas deste contato."),
 };
 
 export const crmListHumanCases: McpToolDefinition<typeof listaChamadosInputShape> = {
@@ -125,22 +138,36 @@ export const crmListHumanCases: McpToolDefinition<typeof listaChamadosInputShape
   description:
     "Casos humanos da org por estado. 'abertos' = awaiting_human|awaiting_lead; 'fechados' = " +
     "resolved|escalated|cancelled. Devolve title, blocker, status, conversation_id e o nome do " +
-    "contato. open_count é sempre o total de abertos, independente do filtro.",
+    "contato. open_count é o total de abertos, independente do filtro de estado (com contact_id, " +
+    "o total de abertos desse contato).",
   inputSchema: listaChamadosInputShape,
   category: "read",
   requiresRole: "agent",
   requiresScope: "mcp:read",
   handler: async (input, ctx) => {
+    // Com `contact_id` (o turno do agente sempre o traz, injetado pelo escopo
+    // do contato), o recorte é o das conversas DESSE contato — e o
+    // `open_count` sai do mesmo recorte.
+    let visiveisPara: string[] | "todas" = "todas";
+    if (input.contact_id) {
+      const { data, error } = await ctx.supabase
+        .from("conversations")
+        .select("id")
+        .eq("organization_id", ctx.organizationId)
+        .eq("contact_id", input.contact_id);
+      if (error) throw new Error(`listar_casos_falhou: ${error.message}`);
+      visiveisPara = ((data ?? []) as Array<{ id: string }>).map((c) => c.id);
+    }
     const { chamados, abertos } = await listarChamados(ctx.supabase, ctx.organizationId, {
       estado: input.state,
       limite: input.limit,
-      // `"todas"`, e não o recorte por atendente que a TELA aplica: `ctx.supabase`
+      // Sem `contact_id`: `"todas"`, e não o recorte por atendente que a TELA aplica: `ctx.supabase`
       // é admin por contrato (o agente não é um usuário com sessão, e a org vem
       // do `ctx`, nunca do input). Recortar aqui faria o agente de IA enxergar
       // MENOS casos do que enxerga hoje — ele abriu esses casos e é quem
       // acompanha a fila inteira. A divergência com a tela é deliberada e está
       // declarada no tipo (`ConversasVisiveis`), não escondida num default.
-      visiveisPara: "todas",
+      visiveisPara,
     });
     return { cases: chamados, open_count: abertos };
   },
@@ -222,7 +249,7 @@ export const crmAddCaseNote: McpToolDefinition<typeof notaInputShape> = {
     await audit({
       action: "ai.case_noted_by_agent",
       actorUserId: a.actorUserId,
-      actorApiTokenId: ctx.apiTokenId,
+      actorApiTokenId: a.actorApiTokenId,
       organizationId: ctx.organizationId,
       resourceType: "agent_case",
       resourceId: input.case_id,
@@ -272,7 +299,7 @@ export const crmCloseHumanCase: McpToolDefinition<typeof encerrarInputShape> = {
     await audit({
       action: "ai.case_closed_by_agent",
       actorUserId: a.actorUserId,
-      actorApiTokenId: ctx.apiTokenId,
+      actorApiTokenId: a.actorApiTokenId,
       organizationId: ctx.organizationId,
       resourceType: "agent_case",
       resourceId: input.case_id,
@@ -337,7 +364,8 @@ export const crmResumeAiAttendance: McpToolDefinition<typeof retomarInputShape> 
         organizationId: ctx.organizationId,
         actor: ctx.actor,
         requestId: ctx.requestId,
-        apiTokenId: ctx.apiTokenId,
+        // Efêmero do agente não entra na coluna com FK (ver `tokenNaAuditoria`).
+        apiTokenId: tokenNaAuditoria(ctx).actorApiTokenId,
       },
       { conversationId: input.conversation_id },
     );

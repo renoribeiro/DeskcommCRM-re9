@@ -18,6 +18,7 @@
 import type pg from 'pg';
 import { z } from 'zod';
 
+import { lerTetoDoTurno, lerTimeoutDeLlm, tetoDoTurnoAbaixoDaVisibilidade } from '@/lib/ai/tempo-da-chamada';
 import { byteaToBuffer, decryptKey } from '@/lib/crypto/aes_gcm';
 import {
   LIMIAR_PADRAO_PCT,
@@ -74,6 +75,18 @@ export interface LlmEdgeConfig {
    * exatamente onde a IA gasta.
    */
   budgetEnforcement?: ChaveDeOrcamento;
+  /**
+   * Teto de UMA requisição HTTP ao provedor (knob `LLM_CALL_TIMEOUT_MS`).
+   * Ausente = o padrão de `lib/ai/tempo-da-chamada.ts` (90 s) — o seam nunca
+   * chama o provedor sem teto.
+   */
+  llmCallTimeoutMs?: number;
+  /**
+   * Teto do TURNO inteiro — passos + ferramentas (knob `LLM_TURN_TIMEOUT_MS`).
+   * Ausente = o padrão de `lib/ai/tempo-da-chamada.ts` (300 s). Fica abaixo da
+   * janela de visibilidade da fila (`tetoDoTurnoAbaixoDaVisibilidade`).
+   */
+  llmTurnTimeoutMs?: number;
 }
 
 /**
@@ -93,6 +106,10 @@ export function llmEdgeConfigFromEnv(env: {
   LLM_CACHE_TTL?: string;
   AI_BUDGET_ENFORCEMENT?: string;
   DEEPSEEK_THINKING?: string;
+  LLM_CALL_TIMEOUT_MS?: string | number;
+  LLM_TURN_TIMEOUT_MS?: string | number;
+  /** Só o worker tem; quando vem, o teto do turno fica abaixo dela. */
+  QUEUE_VISIBILITY_TIMEOUT_MS?: string | number;
 }): LlmEdgeConfig {
   const ttl = env.LLM_CACHE_TTL ?? '1h';
   if (ttl !== '5m' && ttl !== '1h') {
@@ -113,6 +130,11 @@ export function llmEdgeConfigFromEnv(env: {
     // opcional que some faria o seam ter de repetir o default, e dois defaults
     // é como um dos dois fica para trás.
     budgetEnforcement: normalizarChaveDeOrcamento(env.AI_BUDGET_ENFORCEMENT),
+    llmCallTimeoutMs: lerTimeoutDeLlm(env.LLM_CALL_TIMEOUT_MS),
+    llmTurnTimeoutMs: tetoDoTurnoAbaixoDaVisibilidade(
+      lerTetoDoTurno(env.LLM_TURN_TIMEOUT_MS),
+      env.QUEUE_VISIBILITY_TIMEOUT_MS === undefined ? null : Number(env.QUEUE_VISIBILITY_TIMEOUT_MS),
+    ),
   };
 }
 

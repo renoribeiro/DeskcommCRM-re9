@@ -9,9 +9,12 @@ import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit, isServiceRoleConfigured } from "@/lib/audit";
 import { hashRecoveryCode } from "@/lib/auth/recovery-codes";
+import { AUTH_LIMITS, authRateLimited } from "@/lib/auth/rate-limit";
+import { usuarioPorEmail } from "@/lib/auth/usuario-por-email";
 
 export type UseRecoveryCodeResult =
   | { ok: false; error: "invalid_or_used" }
+  | { ok: false; error: "rate_limited" }
   | { ok: false; error: "service_unavailable" };
 
 const inputSchema = z.object({
@@ -28,6 +31,12 @@ const inputSchema = z.object({
  *  - 200ms artificial delay on miss (timing leak protection).
  *  - hashRecoveryCode = sha256 → bytea match.
  *  - Audit emits with masked code (`AB****YZ`).
+ *  - Teto de tentativas por e-mail E por origem (P9, `AUTH_LIMITS.recovery_code`):
+ *    cada acerto apaga os fatores da conta, então chutar código não pode ser
+ *    de graça. O teto conta toda tentativa, exista o e-mail ou não — a resposta
+ *    não vira oráculo de conta.
+ *  - Usuário resolvido por `usuarioPorEmail`, que pagina o diretório inteiro
+ *    (com teto) em vez de olhar só os 200 primeiros.
  */
 export async function useRecoveryCode(
   rawInput: { email: string; code: string },
@@ -57,16 +66,17 @@ export async function useRecoveryCode(
   const admin = createAdminClient();
   const { email, code } = parsed.data;
 
+  if (await authRateLimited("recovery_code", email, AUTH_LIMITS.recovery_code)) {
+    return { ok: false, error: "rate_limited" };
+  }
+
   // 1) Resolve user by email via admin API. Generic error if missing.
-  const { data: list, error: listErr } = await admin.auth.admin.listUsers({
-    page: 1,
-    perPage: 200,
-  });
-  if (listErr) {
+  const busca = await usuarioPorEmail(admin, email);
+  if (!busca.ok) {
     await delay(200);
     return { ok: false, error: "invalid_or_used" };
   }
-  const targetUser = list.users.find((u) => u.email?.toLowerCase() === email);
+  const targetUser = busca.user;
   if (!targetUser) {
     await delay(200);
     return { ok: false, error: "invalid_or_used" };

@@ -5,6 +5,7 @@
  * qualquer modelo de chat. Retry/backoff delegados ao drain (padrão do repo).
  */
 import { generateText } from "ai";
+import { sinalDoTurno } from "@/lib/ai/tempo-da-chamada";
 import type pg from "pg";
 
 import { extractPdfText } from "@/lib/ai/rag/extractors/pdf";
@@ -459,6 +460,9 @@ function buildDeriveDeps(
           ],
         },
       ],
+      // Teto do turno (LLM_TURN_TIMEOUT_MS): visão travada não prende o dreno.
+      // O teto por requisição vem no `fetch` do `createDefaultRegistry`.
+      abortSignal: sinalDoTurno(),
     });
     return res.text;
   };

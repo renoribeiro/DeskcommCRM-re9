@@ -7985,6 +7985,18 @@ export const DICIONARIO: Traducoes = {
   "Em GoTrue próprio, a chave equivalente é:": {
     es: "En un GoTrue propio, la clave equivalente es:",
   },
+  "Nesta instalação pelo Dokploy, o cadastro direto só acompanha a troca depois de um novo Deploy: o CRM já segue o modo novo, mas o login continua com o modo anterior. Esta tela só avisa — nada é corrigido aqui.": {
+    es: "En esta instalación con Dokploy, el registro directo solo sigue el cambio después de un nuevo Deploy: el CRM ya sigue el modo nuevo, pero el inicio de sesión mantiene el modo anterior. Esta pantalla solo avisa — aquí no se corrige nada.",
+  },
+  "No Dokploy, abra o serviço do CRM, ajuste esta chave na aba Environment e clique em Deploy:": {
+    es: "En Dokploy, abre el servicio del CRM, ajusta esta clave en la pestaña Environment y haz clic en Deploy:",
+  },
+  "O e-mail do login é configurado no Dokploy.": {
+    es: "El correo del inicio de sesión se configura en Dokploy.",
+  },
+  "O servidor salvo aqui envia os e-mails do CRM (convites, avisos, LGPD). Os e-mails de \"esqueci a senha\" e de confirmação de cadastro saem pelas variáveis SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD e SMTP_FROM_EMAIL da aba Environment do serviço no Dokploy. Preencha lá os mesmos dados e clique em Deploy.": {
+    es: "El servidor guardado aquí envía los correos del CRM (invitaciones, avisos, LGPD). Los correos de \"olvidé mi contraseña\" y de confirmación de registro salen por las variables SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD y SMTP_FROM_EMAIL de la pestaña Environment del servicio en Dokploy. Completa allí los mismos datos y haz clic en Deploy.",
+  },
   "Não deu para salvar. Tente de novo em instantes.": {
     es: "No se pudo guardar. Inténtalo de nuevo en unos instantes.",
   },
@@ -8975,12 +8987,19 @@ export const DICIONARIO: Traducoes = {
   "Informe o novo horário.": { es: "Indica el nuevo horario." },
   "Já existe um fluxo com este nome.": { es: "Ya existe un flujo con este nombre." },
   "Já existe um contato com este telefone.": { es: "Ya existe un contacto con este teléfono." },
+  "O papel do token não pode ser maior que o seu.": { es: "El rol del token no puede ser superior al tuyo." },
+  "Esta instalação não tem a chave de criptografia de CPF configurada (CPF_ENCRYPTION_KEY). Salve o contato sem CPF ou peça a quem administra o servidor para configurá-la.": { es: "Esta instalación no tiene configurada la clave de cifrado de CPF (CPF_ENCRYPTION_KEY). Guarda el contacto sin CPF o pide a quien administra el servidor que la configure." },
   "Janela inválida.": { es: "Ventana inválida." },
   "Janela inválida: 'from' deve ser anterior a 'to'.": { es: "Ventana inválida: 'from' debe ser anterior a 'to'." },
   "Lead não encontrado.": { es: "Lead no encontrado." },
   "Membro está revogado.": { es: "El acceso del miembro está revocado." },
   "Membro não encontrado.": { es: "Miembro no encontrado." },
   "Mensagem sem mídia.": { es: "Mensaje sin contenido multimedia." },
+  "Tipo de arquivo não suportado.": { es: "Tipo de archivo no admitido." },
+  "o endereço (base URL) aponta para um destino que esta instalação não permite": { es: "la dirección (base URL) apunta a un destino que esta instalación no permite" },
+  "Confirme a verificação em duas etapas para continuar.": { es: "Confirma la verificación en dos pasos para continuar." },
+  "Muitos pedidos de token. Tente em um minuto.": { es: "Demasiadas solicitudes de token. Inténtalo en un minuto." },
+  "won_reason inválido (texto de até 500 caracteres).": { es: "won_reason no válido (texto de hasta 500 caracteres)." },
   "Mídia indisponível no momento.": { es: "Contenido multimedia no disponible en este momento." },
   "Muitas trocas de logo seguidas. Tente em alguns minutos.": {
     es: "Demasiados cambios de logo seguidos. Intenta de nuevo en unos minutos.",

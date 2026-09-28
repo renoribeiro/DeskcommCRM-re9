@@ -5425,27 +5425,51 @@ drop policy if exists "messages_insert" on public.messages;
 drop policy if exists "messages_update" on public.messages;
 drop policy if exists "messages_delete" on public.messages;
 
+-- As três policies abaixo são as da migration 5000 (achado B1): a linha é de
+-- uma organização do usuário E a conversa apontada é da MESMA organização da
+-- linha. Redefinidas AQUI, no lugar da versão antiga, e não no fim do arquivo:
+-- uma versão intermediária diferente da final seria reinstalada a cada update
+-- (`tests/unit/baseline-nao-constroi-o-que-derruba.test.ts`).
 create policy "messages_select" on public.messages
   for select using (
     public.fn_is_platform_admin()
-    or exists (
-      select 1 from public.conversations c
-      where c.id = messages.conversation_id
+    or (
+      organization_id in (select public.fn_user_org_ids())
+      and exists (
+        select 1 from public.conversations c
+         where c.id = messages.conversation_id
+           and c.organization_id = messages.organization_id
+      )
     )
   );
 
 create policy "messages_insert" on public.messages
   for insert with check (
-    (organization_id in (select public.fn_user_org_ids()))
-    or public.fn_is_platform_admin()
+    public.fn_is_platform_admin()
+    or (
+      organization_id in (select public.fn_user_org_ids())
+      and exists (
+        select 1 from public.conversations c
+         where c.id = messages.conversation_id
+           and c.organization_id = messages.organization_id
+      )
+    )
   );
+
 create policy "messages_update" on public.messages
   for update using (
-    (organization_id in (select public.fn_user_org_ids()))
-    or public.fn_is_platform_admin()
+    public.fn_is_platform_admin()
+    or (organization_id in (select public.fn_user_org_ids()))
   ) with check (
-    (organization_id in (select public.fn_user_org_ids()))
-    or public.fn_is_platform_admin()
+    public.fn_is_platform_admin()
+    or (
+      organization_id in (select public.fn_user_org_ids())
+      and exists (
+        select 1 from public.conversations c
+         where c.id = messages.conversation_id
+           and c.organization_id = messages.organization_id
+      )
+    )
   );
 create policy "messages_delete" on public.messages
   for delete using (
@@ -39236,6 +39260,221 @@ grant execute on function public.fn_metricas_links_rastreaveis(uuid) to service_
 
 notify pgrst, 'reload schema';
 
+-- ---- endurecimento: definer sem ator e teto de tokens sem o efêmero (migration 5000) ----
+-- Racional inteiro na migration 5000 (achados B2 e A5). Redefine função, então
+-- fica ANTES da varredura de anon. `fn_resolve_inbound_number` só o servidor
+-- chama; `fn_colegas_podem_mexer_na_agenda` só responde pela organização de
+-- quem chama; o efêmero `agent-run:` do turno do agente sai do teto da 0415.
+revoke execute on function public.fn_resolve_inbound_number(text) from public, anon, authenticated;
+grant  execute on function public.fn_resolve_inbound_number(text) to service_role;
+alter function public.fn_resolve_inbound_number(text) set search_path = public, pg_temp;
+
+create or replace function public.fn_colegas_podem_mexer_na_agenda(p_org uuid)
+returns boolean language sql stable security definer set search_path=public as $$
+ select case
+   when auth.uid() is not null
+    and not public.fn_is_platform_admin()
+    and not (p_org in (select public.fn_user_org_ids()))
+   then null
+   else coalesce(
+     (select (o.settings->'colegas_podem_mexer_na_agenda') is distinct from 'false'::jsonb
+        from public.organizations o where o.id = p_org),
+     true)
+ end;
+$$;
+revoke all on function public.fn_colegas_podem_mexer_na_agenda(uuid) from public, anon;
+grant execute on function public.fn_colegas_podem_mexer_na_agenda(uuid) to authenticated, service_role;
+
+create or replace function public.fn_teto_de_tokens_ativos() returns trigger
+    language plpgsql security definer
+    set search_path = ''
+as $$
+declare
+  v_teto   constant integer := 50;
+  v_ativos integer;
+begin
+  -- O efêmero do turno do agente (nome `agent-run:%`, validade de até 1 hora)
+  -- mintado sem JWT (service role) não disputa o teto dos humanos.
+  if auth.uid() is null
+     and new.name like 'agent-run:%'
+     and new.expires_at is not null
+     and new.expires_at <= coalesce(new.created_at, now()) + interval '1 hour' then
+    return new;
+  end if;
+
+  select count(*)
+    into v_ativos
+    from public.api_tokens
+   where organization_id = new.organization_id
+     and revoked_at is null
+     and (expires_at is null or expires_at > now())
+     and not (name like 'agent-run:%'
+              and expires_at is not null
+              and expires_at <= created_at + interval '1 hour');
+
+  if v_ativos >= v_teto then
+    raise exception
+      'Teto de tokens ativos por organização atingido: % de %. Revogue um token que não esteja mais em uso (Configurações → Tokens de API → Revogar) para liberar espaço — tokens revogados ou expirados não contam — e tente criar outro.',
+      v_ativos, v_teto
+      using errcode = 'PT409';
+  end if;
+
+  return new;
+end;
+$$;
+revoke execute on function public.fn_teto_de_tokens_ativos() from public, anon, authenticated;
+
+
+-- ---- token de pessoa só com escopo concedível (migration 5001) ----
+-- Racional inteiro na migration 5001 (achado R7, a parte de banco do A4).
+-- Cria função, então fica ANTES da varredura de anon. Com JWT de pessoa, o
+-- gatilho recusa (PT403) escopo fora da lista concedível, actor:/agent_run:,
+-- nome agent-run: e role: acima do papel de quem grava; service role passa.
+create or replace function public.fn_token_de_pessoa_so_com_escopo_concedivel()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  -- Espelho literal de ESCOPOS_DE_TOKEN_CONCEDIVEIS (lib/schemas/team.ts).
+  v_escopos_concediveis constant text[] := array[
+    'mcp:read',
+    'mcp:write',
+    'role:viewer',
+    'role:agent',
+    'role:manager',
+    'role:admin',
+    'contacts:read',
+    'contacts:write',
+    'leads:read',
+    'leads:write',
+    'messages:read',
+    'messages:write',
+    'messages:on_behalf',
+    'audit:read'
+  ];
+  v_escopo     jsonb;
+  v_texto      text;
+  v_rank_quem  integer;
+  v_rank_token integer;
+begin
+  -- Sem ator humano: service role (mint efêmero, provisionamento, seeds).
+  if auth.uid() is null then
+    return new;
+  end if;
+
+  -- INSERT: a autoria é de quem grava. Sem isto a linha nasce em nome de
+  -- outro membro (e herda o papel dele na conferência de `resolveApiToken`).
+  if tg_op = 'INSERT' and new.created_by is distinct from auth.uid() then
+    raise exception 'O token precisa ser criado em nome de quem o grava.'
+      using errcode = 'PT403';
+  end if;
+
+  -- UPDATE por pessoa só REVOGA. Qualquer outra coluna fica congelada: trocar
+  -- `token_hash` de um token do agente (`agent-run:`) ou de integração
+  -- (`integration:`) seria tomar a identidade dele com um segredo novo, e
+  -- limpar `revoked_at`/`expires_at` ressuscitaria um token morto. O uso
+  -- (`last_used_at`/`last_used_ip`) é gravado pelo service role, que não
+  -- passa por aqui; `updated_at` acompanha a revogação.
+  if tg_op = 'UPDATE' then
+    if new.id              is distinct from old.id
+       or new.organization_id is distinct from old.organization_id
+       or new.created_by   is distinct from old.created_by
+       or new.name         is distinct from old.name
+       or new.prefix       is distinct from old.prefix
+       or new.token_hash   is distinct from old.token_hash
+       or new.scopes       is distinct from old.scopes
+       or new.expires_at   is distinct from old.expires_at
+       or new.created_at   is distinct from old.created_at
+       or new.last_used_at is distinct from old.last_used_at
+       or new.last_used_ip is distinct from old.last_used_ip then
+      raise exception 'Um token só pode ser revogado; para mudar qualquer outra coisa, crie um novo.'
+        using errcode = 'PT403';
+    end if;
+    if old.revoked_at is not null
+       and (new.revoked_at is distinct from old.revoked_at
+            or new.revoked_by is distinct from old.revoked_by) then
+      raise exception 'Token revogado não volta a valer.'
+        using errcode = 'PT403';
+    end if;
+    if old.revoked_at is null and new.revoked_at is null
+       and new.revoked_by is distinct from old.revoked_by then
+      raise exception 'Só uma revogação registra quem revogou.'
+        using errcode = 'PT403';
+    end if;
+    if new.revoked_at is not null and new.revoked_by is distinct from auth.uid()
+       and old.revoked_at is null then
+      raise exception 'A revogação é registrada em nome de quem revoga.'
+        using errcode = 'PT403';
+    end if;
+    return new;
+  end if;
+
+  if coalesce(new.name, '') ~* '^\s*agent-run:' then
+    raise exception 'O nome "%" é reservado para uso interno. Escolha outro.', new.name
+      using errcode = 'PT403';
+  end if;
+
+  if pg_catalog.jsonb_typeof(new.scopes) is distinct from 'array' then
+    raise exception 'Os escopos do token precisam ser uma lista.'
+      using errcode = 'PT403';
+  end if;
+
+  v_rank_quem := case public.fn_user_role_in_org(new.organization_id)
+    when 'viewer'  then 1
+    when 'agent'   then 2
+    when 'manager' then 3
+    when 'admin'   then 4
+    else 0
+  end;
+
+  for v_escopo in select e from pg_catalog.jsonb_array_elements(new.scopes) as t(e) loop
+    if pg_catalog.jsonb_typeof(v_escopo) is distinct from 'string' then
+      raise exception 'Escopo de token inválido: %.', v_escopo
+        using errcode = 'PT403';
+    end if;
+    v_texto := v_escopo #>> '{}';
+
+    if v_texto like 'actor:%' or v_texto like 'agent_run:%' then
+      raise exception 'O escopo "%" é do servidor e não pode ser concedido a um token de pessoa.', v_texto
+        using errcode = 'PT403';
+    end if;
+
+    if not (v_texto = any (v_escopos_concediveis)) then
+      raise exception 'Escopo de token não concedível: "%".', v_texto
+        using errcode = 'PT403';
+    end if;
+
+    if v_texto like 'role:%' then
+      v_rank_token := case pg_catalog.substr(v_texto, 6)
+        when 'viewer'  then 1
+        when 'agent'   then 2
+        when 'manager' then 3
+        when 'admin'   then 4
+      end;
+      if v_rank_token > v_rank_quem and not public.fn_is_platform_admin() then
+        raise exception 'O papel do token não pode ser maior que o seu.'
+          using errcode = 'PT403';
+      end if;
+    end if;
+  end loop;
+
+  return new;
+end;
+$$;
+
+revoke execute on function public.fn_token_de_pessoa_so_com_escopo_concedivel() from public, anon, authenticated;
+
+drop trigger if exists trg_valida_token_de_pessoa on public.api_tokens;
+create trigger trg_valida_token_de_pessoa
+  before insert or update on public.api_tokens
+  for each row execute function public.fn_token_de_pessoa_so_com_escopo_concedivel();
+
+comment on function public.fn_token_de_pessoa_so_com_escopo_concedivel() is
+  'Gatilho de api_tokens (migration 5001, fork imob, achado R7/A4): com ator humano (auth.uid() não nulo) recusa com PT403 escopo fora da lista concedível (espelho de ESCOPOS_DE_TOKEN_CONCEDIVEIS), prefixos actor:/agent_run:, nome agent-run:, role: acima do papel de quem grava e created_by alheio; no UPDATE só permite revogar. Service role passa.';
+
+
 -- ---- VARREDURA anon: função nova nasce exposta em quem ATUALIZA (migration 0116) ----
 --
 -- ⚠️ DE PROPÓSITO, NENHUMA FUNÇÃO É CRIADA DEPOIS DESTE BLOCO. Apêndice que cria
@@ -40316,3 +40555,67 @@ alter table public.crm_stages
 alter table public.crm_stages
   add constraint crm_stages_win_probability_range
   check (win_probability is null or win_probability between 0 and 100);
+
+-- ---- endurecimento: mensagem presa à conversa, TRUNCATE e índices (migration 5000) ----
+-- Racional inteiro na migration 5000 (achados B1, B3, B5, B6). Sem função
+-- criada. Fica no FIM do arquivo de propósito: o `revoke truncate` tem de vir
+-- depois de toda tabela do apêndice, porque o `ALTER DEFAULT PRIVILEGES ...
+-- GRANT ALL ON TABLES` do corpo do dump é reaplicado a cada `update.sh` e
+-- concede TRUNCATE a toda tabela criada depois dele.
+-- B1: as policies de `messages` foram redefinidas no lugar da versão antiga
+-- (procure `messages_select` acima), e não aqui.
+
+-- B3
+revoke truncate on all tables in schema public from public, anon, authenticated;
+alter default privileges for role postgres in schema public revoke truncate on tables from public, anon, authenticated;
+
+-- B5
+create index if not exists idx_messages_activity_id
+  on public.messages (activity_id) where activity_id is not null;
+create index if not exists idx_messages_demanda_id
+  on public.messages (demanda_id) where demanda_id is not null;
+create index if not exists idx_messages_sent_by_user_id
+  on public.messages (sent_by_user_id) where sent_by_user_id is not null;
+create index if not exists idx_crm_lead_activities_lead_id
+  on public.crm_lead_activities (lead_id);
+create index if not exists idx_contacts_is_merged_into
+  on public.contacts (is_merged_into) where is_merged_into is not null;
+create index if not exists idx_crm_leads_stage_id
+  on public.crm_leads (stage_id);
+create index if not exists idx_crm_leads_pipeline_id
+  on public.crm_leads (pipeline_id);
+create index if not exists idx_crm_leads_contact_id
+  on public.crm_leads (contact_id) where contact_id is not null;
+create index if not exists idx_conversations_contact_id
+  on public.conversations (contact_id);
+create index if not exists idx_conversations_channel_session_id
+  on public.conversations (channel_session_id);
+create index if not exists idx_audit_actor_api_token
+  on public.api_audit_log (actor_api_token_id) where actor_api_token_id is not null;
+-- As demais FKs de uma coluna das mesmas tabelas que a varredura
+-- (`tests/invariants/indices-das-chaves-estrangeiras.test.ts`) achou sem índice.
+-- Todas aceitam nulo e são nulas na maioria das linhas: o parcial é pequeno.
+create index if not exists idx_conversations_active_ai_agent_id
+  on public.conversations (active_ai_agent_id) where active_ai_agent_id is not null;
+create index if not exists idx_conversations_current_demanda_id
+  on public.conversations (current_demanda_id) where current_demanda_id is not null;
+create index if not exists idx_conversations_snoozed_by_user_id
+  on public.conversations (snoozed_by_user_id) where snoozed_by_user_id is not null;
+create index if not exists idx_conversations_usable_for_rag_marked_by
+  on public.conversations (usable_for_rag_marked_by) where usable_for_rag_marked_by is not null;
+create index if not exists idx_crm_leads_lost_from_stage_id
+  on public.crm_leads (lost_from_stage_id) where lost_from_stage_id is not null;
+create index if not exists idx_crm_leads_owner_agent_id
+  on public.crm_leads (owner_agent_id) where owner_agent_id is not null;
+
+-- B6
+create index if not exists idx_conversation_notes_org_conversation
+  on public.conversation_notes (organization_id, conversation_id, created_at);
+create index if not exists idx_cae_org_conversation
+  on public.conversation_assignment_events (organization_id, conversation_id, created_at desc);
+create index if not exists idx_followup_events_org_enrollment
+  on public.followup_enrollment_events (organization_id, enrollment_id, created_at);
+create index if not exists idx_agent_case_events_org_case
+  on public.agent_case_events (organization_id, case_id, created_at);
+
+notify pgrst, 'reload schema';

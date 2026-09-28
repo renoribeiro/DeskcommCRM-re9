@@ -2,23 +2,29 @@
  * OAuth state token (CSRF defense).
  *
  * Format: base64url(`${orgId}.${nonce}.${expMs}`) + "." + hex(HMAC-SHA256).
- * Verified with `crypto.timingSafeEqual`. Signed with INTERNAL_SECRET (already
- * required in env). Tokens expire 10 minutes after issuance.
+ * Verified with `crypto.timingSafeEqual`. Signed with a key DERIVED from
+ * INTERNAL_SECRET (`lib/auth/chave-do-estado-oauth.ts`, auditoria P7). Tokens
+ * expire 10 minutes after issuance.
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { chaveDoEstadoOAuth } from "@/lib/auth/chave-do-estado-oauth";
 
 const TTL_MS = 10 * 60 * 1000; // 10 min
 
-function key(): string {
+function key(): Buffer {
   // Using INTERNAL_SECRET avoids adding yet another env var. If empty (dev with
   // unset secrets) we fall back to a per-process random key — state still works
   // within a single dev process; restart invalidates outstanding flows.
+  //
+  // A chave é DERIVADA do segredo (auditoria P7): o `INTERNAL_SECRET` também é
+  // bearer de cron, e quem o visse forjaria o `state`. Ver
+  // `lib/auth/chave-do-estado-oauth.ts`.
   const secret = process.env.INTERNAL_SECRET || "";
-  if (secret.length >= 16) return secret;
+  if (secret.length >= 16) return chaveDoEstadoOAuth(secret);
   // Memoize per-process fallback.
   if (!fallbackKey) fallbackKey = randomBytes(32).toString("hex");
-  return fallbackKey;
+  return chaveDoEstadoOAuth(fallbackKey);
 }
 
 let fallbackKey: string | null = null;

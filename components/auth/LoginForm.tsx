@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { signInWithPassword } from "@/app/actions/auth/signInWithPassword";
+import { safeNext } from "@/lib/auth/safe-next";
 
 export function LoginForm({ next }: { next?: string }) {
   const t = useT();
@@ -33,14 +34,18 @@ export function LoginForm({ next }: { next?: string }) {
       // Server Action redirects on success — no return value reaches here.
       // On failure, an error discriminator is returned and rendered inline.
       const res = await signInWithPassword(values, next);
+      // O `next` vem da URL: sem sanitizar, `?next=//outro-site` levaria quem
+      // acabou de entrar para fora da instalação (W11). O servidor já sanitiza
+      // o dele; este é o mesmo filtro no lado do navegador.
+      const destino = safeNext(next, "");
       if (!res) {
         // Should be unreachable (redirect throws), but guard anyway.
-        router.replace(next || "/app");
+        router.replace(destino || "/app");
         return;
       }
       if (res.error === "mfa_required") {
         const params = new URLSearchParams();
-        if (next) params.set("next", next);
+        if (destino) params.set("next", destino);
         if (res.challengeId) params.set("factor", res.challengeId);
         router.replace(`/login/mfa${params.toString() ? `?${params}` : ""}`);
         return;

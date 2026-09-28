@@ -191,7 +191,10 @@ outputSchema: z.object({
 inputSchema: z.object({
   conversation_id: z.string().uuid(),
   body: z.string().min(1).max(4096),
-  media_url: z.string().url().optional()
+  // `media_url` foi removido (auditoria P1, docs/imobiliario/04): URL do
+  // cliente virava proxy autenticado para a API do WAHA. Mídia só pelo Storage:
+  media_storage_path: z.string().min(1).max(500).optional(),
+  media_mime: z.string().max(255).optional()
 })
 
 outputSchema: z.object({

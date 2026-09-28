@@ -143,6 +143,13 @@ export const AUTH_LIMITS = {
   // usado UMA vez na vida de uma conta — 3 por hora por identidade já é
   // folga para quem errou o nome duas vezes.
   org_recovery: { ip: 5, id: 3, windowSec: 3600 },
+  // Código de verificação em duas etapas: teto por ORIGEM, contando toda
+  // tentativa. O teto por CONTA é de falhas, e mora em `mfaBloqueadoPorFalhas`.
+  mfa_verify: { ip: 60, windowSec: 300 },
+  // Código de recuperação (P9): cada acerto APAGA os fatores da conta, e o
+  // espaço de códigos é finito — 5 tentativas por e-mail por hora é folga para
+  // quem digita errado e nenhuma para quem varre.
+  recovery_code: { ip: 20, id: 5, windowSec: 3600 },
 } satisfies Record<string, AuthRateLimits>;
 
 export const __LOGIN_IP_DEFAULT_PARA_TESTE = LOGIN_IP_DEFAULT;
@@ -168,6 +175,56 @@ export async function contaBloqueadaPorFalhas(email: string, limits: AuthRateLim
 export async function registrarFalhaDeLogin(email: string, limits: AuthRateLimits): Promise<void> {
   if (limits.id === undefined) return;
   await checkRateLimit(`auth:login_fail:id:${opaque(email)}`, limits.id, limits.windowSec);
+}
+
+/**
+ * Bloqueio por FALHA do código TOTP, por CONTA (P6).
+ *
+ * O contador vivia só num cookie (`mfa_attempts`) que o próprio navegador
+ * apaga: quem tem a senha e quer adivinhar o código limpava o cookie a cada 3
+ * erros e seguia sem freio. Aqui o contador mora no Redis (memória do processo
+ * sem Redis, como o resto deste módulo), chaveado pela CONTA — trocar de
+ * navegador ou de IP não zera nada.
+ *
+ * Duas janelas, porque são dois ataques:
+ *  - CURTA (3 falhas / 60 s): a mesma experiência de antes para quem erra
+ *    digitando — "aguarde 60 s";
+ *  - LONGA (10 falhas / 1 h): o teto de quem espera a janela curta vencer e
+ *    recomeça. Sem ela, 3 a cada minuto dariam 4.320 chutes por dia.
+ *
+ * Acerto não paga: a consulta vem antes do GoTrue e o incremento só depois de
+ * um código errado — o mesmo desenho de `contaBloqueadaPorFalhas`.
+ */
+export const MFA_JANELAS = [
+  { rotulo: "curta", falhas: 3, windowSec: 60 },
+  { rotulo: "longa", falhas: 10, windowSec: 3600 },
+] as const;
+
+function chaveDeFalhaDeMfa(rotulo: string, userId: string): string {
+  return `auth:mfa_fail:${rotulo}:id:${opaque(userId)}`;
+}
+
+/** Segundos até poder tentar de novo, ou `null` quando não há bloqueio. */
+export async function mfaBloqueadoPorFalhas(userId: string): Promise<number | null> {
+  let espera: number | null = null;
+  for (const j of MFA_JANELAS) {
+    const atual = await peekRateLimit(chaveDeFalhaDeMfa(j.rotulo, userId), j.windowSec);
+    if (atual >= j.falhas) espera = Math.max(espera ?? 0, j.windowSec);
+  }
+  return espera;
+}
+
+/**
+ * Registra um código errado. Devolve os segundos de espera quando ESTA falha
+ * fechou uma das janelas, ou `null`.
+ */
+export async function registrarFalhaDeMfa(userId: string): Promise<number | null> {
+  let espera: number | null = null;
+  for (const j of MFA_JANELAS) {
+    const r = await checkRateLimit(chaveDeFalhaDeMfa(j.rotulo, userId), j.falhas, j.windowSec);
+    if (r.count >= j.falhas) espera = Math.max(espera ?? 0, j.windowSec);
+  }
+  return espera;
 }
 
 /**

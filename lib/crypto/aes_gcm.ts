@@ -54,14 +54,7 @@ export function encryptKey(plaintext: string): EncryptedSecret {
   if (!plaintext || typeof plaintext !== "string") {
     throw new Error("plaintext inválido pra encryptKey()");
   }
-  const key = getKey();
-  const iv = randomBytes(IV_LENGTH_BYTES);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  if (tag.length !== TAG_LENGTH_BYTES) {
-    throw new Error(`tag length inesperada: ${tag.length}`);
-  }
+  const { ciphertext, iv, tag } = encryptWithKey(getKey(), plaintext);
   const last4 = plaintext.slice(-4);
   return { ciphertext, iv, tag, last4 };
 }
@@ -71,9 +64,56 @@ export function decryptKey(input: {
   iv: Buffer;
   tag: Buffer;
 }): string {
+  return decryptWithKey(getKey(), input);
+}
+
+/**
+ * Cifra com uma chave explícita de 32 bytes (AES-256-GCM, IV aleatório de 12
+ * bytes, tag de 16). É o miolo de `encryptKey`, exposto para quem tem chave
+ * própria — o CPF (`lib/contacts/cpf.ts`) usa a `CPF_ENCRYPTION_KEY`, nunca a
+ * das credenciais de IA.
+ */
+export function encryptWithKey(
+  key: Buffer,
+  plaintext: string,
+): { ciphertext: Buffer; iv: Buffer; tag: Buffer } {
+  if (key.length !== KEY_LENGTH_BYTES) {
+    throw new Error(`chave AES-256 deve ter ${KEY_LENGTH_BYTES} bytes (lido: ${key.length})`);
+  }
+  const iv = randomBytes(IV_LENGTH_BYTES);
+  const cipher = createCipheriv("aes-256-gcm", key, iv, { authTagLength: TAG_LENGTH_BYTES });
+  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  if (tag.length !== TAG_LENGTH_BYTES) {
+    throw new Error(`tag length inesperada: ${tag.length}`);
+  }
+  return { ciphertext, iv, tag };
+}
+
+/**
+ * Decifra conferindo o TAMANHO do IV e da tag antes de tocar no decipher.
+ *
+ * Sem `authTagLength`, o Node aceita tag truncada (4, 8, 12… bytes) em GCM: a
+ * autenticação passa a valer 32 bits em vez de 128, e um adulterador que
+ * controle o `bytea` tenta 2^32 em vez de 2^128. O tamanho do IV também é fixo
+ * aqui (12): um IV de outro tamanho não é defeito que se decifra "por sorte",
+ * é dado corrompido ou forjado.
+ */
+export function decryptWithKey(
+  key: Buffer,
+  input: { ciphertext: Buffer; iv: Buffer; tag: Buffer },
+): string {
   const { ciphertext, iv, tag } = input;
-  const key = getKey();
-  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  if (key.length !== KEY_LENGTH_BYTES) {
+    throw new Error(`chave AES-256 deve ter ${KEY_LENGTH_BYTES} bytes (lido: ${key.length})`);
+  }
+  if (iv.length !== IV_LENGTH_BYTES) {
+    throw new Error(`IV com tamanho inválido: ${iv.length} (esperado ${IV_LENGTH_BYTES})`);
+  }
+  if (tag.length !== TAG_LENGTH_BYTES) {
+    throw new Error(`tag com tamanho inválido: ${tag.length} (esperado ${TAG_LENGTH_BYTES})`);
+  }
+  const decipher = createDecipheriv("aes-256-gcm", key, iv, { authTagLength: TAG_LENGTH_BYTES });
   decipher.setAuthTag(tag);
   const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
   return plaintext.toString("utf8");

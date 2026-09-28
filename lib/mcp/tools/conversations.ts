@@ -20,6 +20,7 @@ import {
 } from "@/lib/inbox/rascunho-sugerido";
 import { getQueuePositions } from "@/lib/routing/queue";
 import { resolveUserNames } from "./_users";
+import { tokenNaAuditoria } from "../audit";
 import type { McpToolDefinition } from "../types";
 
 /**
@@ -80,11 +81,9 @@ export const crmListConversations: McpToolDefinition<typeof listInputShape> = {
         limit: input.limit,
         cursor: input.cursor,
       },
+      { contact_id: input.contact_id },
     );
-    let conversations = result.conversations;
-    if (input.contact_id) {
-      conversations = conversations.filter((c) => c.contact_id === input.contact_id);
-    }
+    const conversations = result.conversations;
     // Nomes (dedupe) e posições de fila (1 query cada) — sem N+1 na listagem.
     const names = await resolveUserNames(
       ctx.supabase,
@@ -286,12 +285,17 @@ export const crmCreateConversationDraft: McpToolDefinition<typeof rascunhoInputS
     await audit({
       action: "conversation.draft_created",
       actorUserId: ctx.actor.type === "user" ? ctx.actor.id : null,
-      actorApiTokenId: ctx.apiTokenId,
+      actorApiTokenId: tokenNaAuditoria(ctx).actorApiTokenId,
       organizationId: ctx.organizationId,
       resourceType: "conversation",
       resourceId: input.conversation_id,
       requestId: ctx.requestId,
-      metadata: { draft_id: rascunho.draftId, origem: input.origem, via: "mcp" },
+      metadata: {
+        draft_id: rascunho.draftId,
+        origem: input.origem,
+        via: "mcp",
+        ...tokenNaAuditoria(ctx).metadata,
+      },
     });
     return { draft_id: rascunho.draftId, url: rascunho.url };
   },
