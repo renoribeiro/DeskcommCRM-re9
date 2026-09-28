@@ -141,6 +141,12 @@ async function main(): Promise<void> {
     // Existe para a aritmética continuar estourando depois da #528; sem ela o
     // cenário de recusa vira um clique que sempre dá certo.
     "crm_list_knowledge_sources",
+    // A DÉCIMA, pelo mesmo motivo da nona: a auditoria A1 tirou
+    // `crm_search_contacts` de "Atender" (num atendimento o agente só enxerga o
+    // cliente da conversa, e a busca só devolveria ele mesmo). O pacote caiu para
+    // 16, e 9 + 16 = 25 caberia — a recusa sumiria. Com esta, 10 + 16 = 26.
+    // Tem de andar junto com `TOOLS_DO_SEED` de tests/e2e/capacidades-do-agente.spec.ts.
+    "crm_list_improvement_proposals",
   ];
 
   // REPÕE TODAS AS VERSÕES DRAFT DESTE AGENTE, não só a de maior número.
