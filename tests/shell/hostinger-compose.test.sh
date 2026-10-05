@@ -43,6 +43,8 @@ check "no topo, só services e volumes (o editor recusou x-* e configs)" \
   igual "$(grep -E '^[A-Za-z_-]+:' "$COMPOSE" | tr -d ':' | sort | tr '\n' ' ')" "services volumes "
 check "nada de <<:, configs: nem networks: (o editor recusou; a rede do projeto basta)" \
   bash -c '! grep -nE "^[[:space:]]*(<<|configs|networks):" "$1"' _ "$COMPOSE"
+check "todo volume declarado com valor explícito ({}), nenhuma chave vazia" \
+  bash -c 'v="$(awk "/^volumes:/{f=1;next} /^[^ #]/{f=0} f && /^  [a-z]/" "$1")"; [ -n "$v" ] && ! grep -vE "^  [a-z0-9-]+: \{\}$" <<<"$v"' _ "$COMPOSE"
 check "tamanho de YAML comum (< 40 KB; a versão recusada tinha 117 KB)" \
   test "$(wc -c < "$COMPOSE")" -lt 40000
 

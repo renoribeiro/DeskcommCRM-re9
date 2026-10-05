@@ -581,10 +581,14 @@ services:
         condition: service_healthy
     logging: *log
 
+# Cada volume com valor explicito (`{}`), nunca a chave vazia: o painel da
+# Hostinger implantou um arquivo em que `arquivos:` tinha sumido ("service db
+# refers to undefined volume arquivos"), e chave sem valor e a forma que um
+# editor que regrava o YAML descarta.
 volumes:
-  arquivos:
-  db-data:
-  db-config:
-  storage-data:
-  waha-data:
-  waha-media:
+  arquivos: {}
+  db-data: {}
+  db-config: {}
+  storage-data: {}
+  waha-data: {}
+  waha-media: {}
