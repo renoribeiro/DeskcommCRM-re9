@@ -99,25 +99,25 @@ waha_api_key="$(hex 32)"
 waha_sha512="$(printf '%s' "$waha_api_key" | openssl dgst -sha512 -hex | awk '{print $NF}')"
 
 cat <<EOF
-# ── ${nome} (Dokploy ou Docker Manager da Hostinger) — gerado em $(date -u +%Y-%m-%dT%H:%M:%SZ) ──
-# Guarde este bloco num gerenciador de senhas. NÃO gere de novo depois de instalar.
+# -- ${nome} (Dokploy ou Docker Manager da Hostinger) - gerado em $(date -u +%Y-%m-%dT%H:%M:%SZ) --
+# Guarde este bloco num gerenciador de senhas. NAO gere de novo depois de instalar.
 
-# Domínio e primeiro administrador
+# Dominio e primeiro administrador
 DOMAIN=${dominio}
 OWNER_EMAIL=${email}
 OWNER_PASSWORD=$(hex 12)
 APP_NAME=${nome}
 APP_LOCALE=pt-BR
 
-# Cadastro: só por convite. É uma instalação de UMA empresa — ninguém de fora
+# Cadastro: so por convite. E uma instalacao de UMA empresa - ninguem de fora
 # deve conseguir criar conta sozinho (o CRM e o Auth fecham juntos).
 SIGNUP_MODE=so_convite
 DISABLE_SIGNUP=true
 
-# Versão das imagens: número fixo, sempre. Para atualizar, troque aqui e implante de novo.
+# Versao das imagens: numero fixo, sempre. Para atualizar, troque aqui e implante de novo.
 IMAGE_TAG=${versao}
 
-# Traefik do Dokploy (os nomes padrão do Dokploy; o compose da Hostinger não as lê)
+# Traefik do Dokploy (os nomes padrao do Dokploy; o compose da Hostinger nao as le)
 TRAEFIK_NETWORK=dokploy-network
 TRAEFIK_ENTRYPOINT=websecure
 TRAEFIK_ENTRYPOINT_HTTP=web
@@ -137,7 +137,7 @@ DASHBOARD_PASSWORD=$(hex 16)
 # Segredos do CRM
 INTERNAL_SECRET=$(hex 32)
 INTERNAL_CRON_SECRET=$(hex 32)
-# Chaves próprias de convite e de OAuth: sem elas, as duas seriam derivadas do
+# Chaves proprias de convite e de OAuth: sem elas, as duas seriam derivadas do
 # INTERNAL_SECRET, e quem o visse forjaria convite de admin e state de OAuth.
 INVITE_TOKEN_SECRET=$(hex 32)
 OAUTH_STATE_SECRET=$(hex 32)
@@ -152,7 +152,7 @@ WAHA_API_KEY_SHA512=${waha_sha512}
 WAHA_HMAC_SECRET=$(hex 32)
 SRH_TOKEN=$(hex 32)
 
-# E-mail (opcional agora; sem ele, "esqueci a senha" não envia e-mail)
+# E-mail (opcional agora; sem ele, "esqueci a senha" nao envia e-mail)
 SMTP_HOST=
 SMTP_PORT=587
 SMTP_USERNAME=

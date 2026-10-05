@@ -12,16 +12,18 @@ last_updated: 2026-10-05
 > com o **Traefik da Hostinger** na frente. O banco (Supabase) fica dentro da própria VPS.
 >
 > É o mesmo sistema da instalação pelo Dokploy (`03-instalacao-vps-dokploy.md`), com uma
-> diferença: o Docker Manager recebe **só o YAML**, sem o repositório ao lado. Por isso o arquivo
-> desta instalação, `docker-compose.hostinger.yml`, é **autocontido**: os arquivos do Supabase e o
-> script de preparo vêm dentro dele.
+> diferença: o Docker Manager recebe **só o YAML**, sem o repositório ao lado, e o editor dele é
+> mais estrito que o Docker Compose. Por isso o `docker-compose.hostinger.yml` usa só o que um YAML
+> comum do painel usa (como o do Typebot), e os arquivos do Supabase (init do banco e gateway) são
+> **baixados da tag da versão** por um serviço próprio, `arquivos`, a cada implantação.
 
 ## O que vai rodar
 
 Os mesmos 14 serviços do Dokploy (Supabase: `db`, `auth`, `rest`, `realtime`, `storage`,
-`imgproxy`, `api-gw`; CRM: `setup`, `app`, `worker`, `scheduler`, `waha`, `redis`, `srh`). Todos
-com teto de memória; a soma dos que ficam no ar é ~6,6 GB. O `setup` roda a cada implantação e
-**sai**: prepara o banco e cria o primeiro administrador.
+`imgproxy`, `api-gw`; CRM: `setup`, `app`, `worker`, `scheduler`, `waha`, `redis`, `srh`), mais o
+`arquivos`. Todos com teto de memória; a soma dos que ficam no ar é ~6,6 GB. Dois rodam a cada
+implantação e **saem**: `arquivos` (baixa os arquivos do Supabase da versão) e `setup` (prepara o
+banco e cria o primeiro administrador).
 
 Nenhuma porta é publicada na VPS. O Traefik da Hostinger roda em `network_mode: host` e chega
 aos contêineres pela rede do projeto. Publicar uma porta (como o YAML do Typebot faz com
@@ -65,13 +67,14 @@ free -h
 No terminal da VPS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/renoribeiro/DeskcommCRM-re9/v1.58.0/infra/dokploy/gerar-env.sh -o /root/gerar-env.sh
-bash /root/gerar-env.sh --dominio crmimob.re9imob.com.br --email SEU-EMAIL --versao 1.58.0
+curl -fsSL https://raw.githubusercontent.com/renoribeiro/DeskcommCRM-re9/v1.58.1/infra/dokploy/gerar-env.sh -o /root/gerar-env.sh
+bash /root/gerar-env.sh --dominio crmimob.re9imob.com.br --email SEU-EMAIL --versao 1.58.1
 ```
 
 - Troque `SEU-EMAIL` pelo e-mail do primeiro administrador.
-- `--versao` é o número de uma versão **publicada**, a partir da **1.58.0** — a primeira que traz
-  o `docker-compose.hostinger.yml`. Para ver as que existem:
+- `--versao` é o número de uma versão **publicada**, a partir da **1.58.1**. A 1.58.0 trouxe o
+  `docker-compose.hostinger.yml`, mas com acentos nos comentários, e o editor da Hostinger recusa
+  o arquivo. Para ver as versões que existem:
   `git ls-remote --tags https://github.com/renoribeiro/DeskcommCRM-re9 'v*'`
 - O comando imprime um bloco de texto. **Guarde-o num gerenciador de senhas**: ele traz a senha do
   administrador (`OWNER_PASSWORD`) e as chaves do banco.
@@ -94,7 +97,7 @@ bash /root/gerar-env.sh --dominio crmimob.re9imob.com.br --email SEU-EMAIL --ver
 Nos logs do contêiner `setup`:
 
 ```
-[setup] baixando o schema da versão 1.58.0: https://raw.githubusercontent.com/renoribeiro/DeskcommCRM-re9/v1.58.0/supabase/baseline.sql
+[setup] baixando o schema da versão 1.58.1: https://raw.githubusercontent.com/renoribeiro/DeskcommCRM-re9/v1.58.1/supabase/baseline.sql
 [setup] banco novo — aplicando o baseline (qualquer erro interrompe)
 [setup] primeiro administrador: SEU-EMAIL
 [setup] pronto
@@ -114,13 +117,27 @@ e `OWNER_PASSWORD` do passo 1 e **troque a senha** em Configurações › Perfil
 
 | Sintoma | Causa provável |
 |---|---|
-| O painel recusa com `configs` ou `content` desconhecido | Docker Compose antigo na VPS. O arquivo exige o Compose **2.23.1 ou mais novo** (`docker compose version`); atualize o Docker da VPS |
+| "O arquivo YAML não pôde ser processado", com a linha 1 marcada | YAML de uma versão anterior à 1.58.1 (tinha acento, blocos `x-` e arquivos embutidos, que o editor recusa). Use o `docker-compose.hostinger.yml` da 1.58.1 ou mais nova, sem editar. Se ainda assim o editor recusar, use o caminho pelo terminal, abaixo |
+| `arquivos` termina com erro `NAO consegui baixar` | A versão (`IMAGE_TAG`) não existe como tag, ou a VPS não alcança `raw.githubusercontent.com` |
 | O painel recusa com `defina DOMAIN`, `defina IMAGE_TAG`… | Falta a variável. Cole de novo o bloco **inteiro** do passo 1 |
 | `404 page not found` | O Traefik não achou o CRM: o `app` não subiu (veja os logs), o DNS ainda não propagou, ou o projeto Traefik da Hostinger está parado |
 | Certificado inválido | O DNS ainda não aponta para a VPS quando o Traefik pediu o certificado. Espere a propagação e implante de novo |
 | Página abre, mas o login dá erro | O `api-gw` (gateway do Supabase) não subiu: veja os logs dele |
 | `setup` diz `NÃO consegui baixar o schema da versão X` | A versão não existe como tag, ou a VPS não alcança `raw.githubusercontent.com` |
 | `pull access denied` | Os pacotes do GitHub estão privados: em `https://github.com/renoribeiro?tab=packages`, cada pacote › Package settings › **Public** |
+
+### Caminho pelo terminal (se o editor do painel recusar o YAML)
+
+O editor do Docker Manager valida o YAML antes do Docker. Se ele recusar, o mesmo arquivo sobe
+pelo terminal da VPS (**Web console**), sem passar pelo editor:
+
+```bash
+mkdir -p /docker/crmimob && cd /docker/crmimob
+curl -fsSL https://raw.githubusercontent.com/renoribeiro/DeskcommCRM-re9/v1.58.1/docker-compose.hostinger.yml -o docker-compose.yml
+# cole o bloco do passo 1 em /docker/crmimob/.env (nano .env), salve e:
+docker compose -p crmimob up -d
+docker compose -p crmimob logs -f setup
+```
 
 ---
 
@@ -155,7 +172,7 @@ Qualquer outra variável que o CRM conhece (Web Push, Resend, Google Agenda, `SU
 O mesmo script do Dokploy serve, informando o nome do projeto:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/renoribeiro/DeskcommCRM-re9/v1.58.0/infra/dokploy/backup.sh -o /root/backup-imobcrm.sh
+curl -fsSL https://raw.githubusercontent.com/renoribeiro/DeskcommCRM-re9/v1.58.1/infra/dokploy/backup.sh -o /root/backup-imobcrm.sh
 bash /root/backup-imobcrm.sh --projeto crmimob
 ```
 
