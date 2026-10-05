@@ -8,6 +8,12 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [1.58.1] — 2026-10-05
+
+### Corrigido
+
+- **O YAML da Hostinger passa a ser aceito pelo editor do Docker Manager** O editor YAML do Docker Manager da Hostinger recusava o `docker-compose.hostinger.yml` da 1.58.0 ("O arquivo YAML não pôde ser processado"). Ele é mais estrito que o Docker Compose: recusou os acentos e, depois, os blocos `x-` no topo, o `<<:` e os arquivos do Supabase embutidos no próprio YAML. O arquivo agora é pequeno, 100% ASCII e usa só o que um YAML comum do painel usa. Os arquivos do Supabase (inicialização do banco e configuração do gateway) passam a ser baixados da tag da versão por um serviço próprio, `arquivos`, a cada implantação, como o preparo já baixa o schema do banco. O bloco de variáveis que o `gerar-env.sh` imprime também passou a ser só ASCII. Quem instala pela Hostinger usa o YAML da 1.58.1 ou mais nova; as imagens da 1.58.0 servem do mesmo jeito.
+
 ## [1.58.0] — 2026-10-05
 
 ### Adicionado
@@ -8849,7 +8855,8 @@ Primeira versão marcada do DeskcommCRM. O projeto vinha sendo desenvolvido publ
 
 - **Node 22 é obrigatório para desenvolvimento.** A suíte de invariantes instancia o cliente do Supabase, que exige o `WebSocket` global — nativo apenas a partir do Node 22. Isso não afeta quem apenas hospeda: a VPS roda a imagem pronta.
 
-[Não lançado]: https://github.com/melgarafael/DeskcommCRM/compare/v1.58.0...HEAD
+[Não lançado]: https://github.com/melgarafael/DeskcommCRM/compare/v1.58.1...HEAD
+[1.58.1]: https://github.com/melgarafael/DeskcommCRM/compare/v1.58.0...v1.58.1
 [1.58.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.57.0...v1.58.0
 [1.57.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.56.0...v1.57.0
 [1.56.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.55.0...v1.56.0
