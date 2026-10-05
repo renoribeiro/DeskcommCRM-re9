@@ -57,6 +57,7 @@ de menor precedência e registre.
 | [`imobiliario/02-plano-vertical-imobiliario.md`](imobiliario/02-plano-vertical-imobiliario.md) | **Plano do ImobCRM** (vertical imobiliário de venda, SaaS) — decisões do dono, arquitetura, modelo de domínio, IA, épicos, compliance, roadmap |
 | [`imobiliario/03-instalacao-vps-dokploy.md`](imobiliario/03-instalacao-vps-dokploy.md) | Instalar o ImobCRM numa VPS com Dokploy e o Supabase na própria VPS |
 | [`imobiliario/04-auditoria-seguranca-e-qualidade.md`](imobiliario/04-auditoria-seguranca-e-qualidade.md) | Auditoria de segurança, correção e eficiência (6 frentes) com o plano de ajuste de cada achado |
+| [`imobiliario/05-instalacao-hostinger-docker-manager.md`](imobiliario/05-instalacao-hostinger-docker-manager.md) | Instalar o ImobCRM pelo Docker Manager da Hostinger, com o YAML autocontido `docker-compose.hostinger.yml` |
 
 ## 3. Contrato técnico (specs)
 

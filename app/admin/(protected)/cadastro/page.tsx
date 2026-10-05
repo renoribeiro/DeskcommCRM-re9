@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { loadAuthUser } from "@/lib/auth/server";
 import { env } from "@/lib/env";
+import { TEXTOS_DO_PAINEL, painelDaInstalacao } from "@/lib/deploy/painel";
 import { haAvisoDeTrocaDeModo } from "@/lib/auth/aviso-da-troca-de-modo";
 import { modoDeCadastro } from "@/lib/auth/politica-de-cadastro";
 import { listPendingRegistrationRequests } from "@/lib/auth/registration-requests";
@@ -56,9 +57,9 @@ export default async function Page() {
   // separado, mandar rodar o update.sh seria instrução errada e aviso eterno:
   // ali quem muda é o operador, no painel ou no env do GoTrue próprio.
   const kitSincroniza = process.env.SINGLE_SERVER === "1";
-  // Instalação pelo Dokploy (docker-compose.dokploy.yml): o GoTrue lê o
-  // DISABLE_SIGNUP do Environment do serviço, e só um novo Deploy o aplica.
-  const viaDokploy = env.DEPLOY_MODE === "dokploy";
+  // Instalação por painel (Dokploy ou Docker Manager da Hostinger): o GoTrue lê
+  // o DISABLE_SIGNUP das variáveis do serviço, e só uma nova implantação o aplica.
+  const painel = painelDaInstalacao(env.DEPLOY_MODE);
   const alvoDoGoTrue = modo === "so_convite" ? "true" : "false";
 
   return (
@@ -79,19 +80,13 @@ export default async function Page() {
           <p className="font-medium">
             {traduzir("A troca de modo ainda não chegou ao servidor.", usuario.idioma)}
           </p>
-          {viaDokploy ? (
+          {painel ? (
             <>
               <p className="mt-1">
-                {traduzir(
-                  "Nesta instalação pelo Dokploy, o cadastro direto só acompanha a troca depois de um novo Deploy: o CRM já segue o modo novo, mas o login continua com o modo anterior. Esta tela só avisa — nada é corrigido aqui.",
-                  usuario.idioma,
-                )}
+                {traduzir(TEXTOS_DO_PAINEL[painel].cadastroExplica, usuario.idioma)}
               </p>
               <p className="mt-2">
-                {traduzir(
-                  "No Dokploy, abra o serviço do CRM, ajuste esta chave na aba Environment e clique em Deploy:",
-                  usuario.idioma,
-                )}
+                {traduzir(TEXTOS_DO_PAINEL[painel].cadastroInstrui, usuario.idioma)}
               </p>
               <code className="mt-1 block overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs">
                 DISABLE_SIGNUP={alvoDoGoTrue}

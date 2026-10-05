@@ -143,6 +143,24 @@ describe("/admin/email — o que a página entrega ao navegador", () => {
     }
   });
 
+  it("instalação pelo Docker Manager da Hostinger: o aviso aponta o painel certo, não o Dokploy", async () => {
+    const anterior = env.DEPLOY_MODE;
+    env.DEPLOY_MODE = "hostinger";
+    try {
+      const elemento = (await Page()) as unknown as {
+        props: { children: Array<{ type: unknown; props: Record<string, unknown> }> };
+      };
+      const [aviso, formulario] = elemento.props.children;
+      if (!aviso || !formulario) throw new Error("a página não devolveu aviso + formulário");
+      expect(formulario.type).toBe(FormularioDeSmtp);
+      expect(JSON.stringify(formulario.props)).not.toContain(SENHA_EM_CLARO);
+      expect(JSON.stringify(aviso.props)).toContain("projeto no Docker Manager da Hostinger");
+      expect(JSON.stringify(aviso.props)).not.toContain("Dokploy");
+    } finally {
+      env.DEPLOY_MODE = anterior;
+    }
+  });
+
   it("quem não é dono da instalação não vê a tela", async () => {
     usuario = { is_platform_admin: false, idioma: "pt-BR" };
 

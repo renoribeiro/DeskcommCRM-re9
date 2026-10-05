@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { loadAuthUser } from "@/lib/auth/server";
 import { env } from "@/lib/env";
+import { TEXTOS_DO_PAINEL, painelDaInstalacao } from "@/lib/deploy/painel";
 import { getSmtpConfig } from "@/lib/email/config";
 import { transporteEmVigor } from "@/lib/email/roteador";
 import { CATALOGO_DA_INSTALACAO } from "@/lib/instalacao/catalogo";
@@ -71,10 +72,11 @@ export default async function Page() {
     })),
   );
 
-  // Instalação pelo Dokploy: o SMTP salvo aqui vale para os e-mails do CRM, mas
-  // o login (GoTrue) lê as SMTP_* do Environment do serviço — o kit copia de um
-  // para o outro no update.sh; no Dokploy, quem copia é a pessoa, e esta tela diz.
-  const viaDokploy = env.DEPLOY_MODE === "dokploy";
+  // Instalação por painel (Dokploy ou Docker Manager da Hostinger): o SMTP salvo
+  // aqui vale para os e-mails do CRM, mas o login (GoTrue) lê as SMTP_* das
+  // variáveis do serviço — o kit copia de um para o outro no update.sh; no
+  // painel, quem copia é a pessoa, e esta tela diz onde.
+  const painel = painelDaInstalacao(env.DEPLOY_MODE);
   const idioma = normalizarIdioma(usuario.locale);
 
   const formulario = (
@@ -101,7 +103,7 @@ export default async function Page() {
       idioma={idioma}
     />
   );
-  if (!viaDokploy) return formulario;
+  if (!painel) return formulario;
 
   return (
     <div className="space-y-6">
@@ -109,15 +111,8 @@ export default async function Page() {
         role="status"
         className="rounded-md border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm dark:border-amber-500/30 dark:bg-amber-950/20"
       >
-        <p className="font-medium">
-          {traduzir("O e-mail do login é configurado no Dokploy.", idioma)}
-        </p>
-        <p className="mt-1">
-          {traduzir(
-            "O servidor salvo aqui envia os e-mails do CRM (convites, avisos, LGPD). Os e-mails de \"esqueci a senha\" e de confirmação de cadastro saem pelas variáveis SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD e SMTP_FROM_EMAIL da aba Environment do serviço no Dokploy. Preencha lá os mesmos dados e clique em Deploy.",
-            idioma,
-          )}
-        </p>
+        <p className="font-medium">{traduzir(TEXTOS_DO_PAINEL[painel].emailTitulo, idioma)}</p>
+        <p className="mt-1">{traduzir(TEXTOS_DO_PAINEL[painel].emailExplica, idioma)}</p>
       </div>
       {formulario}
     </div>

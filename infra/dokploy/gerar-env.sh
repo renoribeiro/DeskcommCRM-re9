@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Gera as variáveis de ambiente do `docker-compose.dokploy.yml` (ImobCRM/DeskcommCRM
-# com o Supabase na mesma VPS, publicado pelo Traefik do Dokploy).
+# Gera as variáveis de ambiente do `docker-compose.dokploy.yml` e do
+# `docker-compose.hostinger.yml` (ImobCRM/DeskcommCRM com o Supabase na mesma
+# VPS, publicado pelo Traefik do Dokploy ou pelo da Hostinger).
 #
 #   bash infra/dokploy/gerar-env.sh --dominio crm.suaempresa.com.br --email voce@suaempresa.com.br --versao 1.57.0
 #
@@ -98,7 +99,7 @@ waha_api_key="$(hex 32)"
 waha_sha512="$(printf '%s' "$waha_api_key" | openssl dgst -sha512 -hex | awk '{print $NF}')"
 
 cat <<EOF
-# ── ${nome} no Dokploy — gerado em $(date -u +%Y-%m-%dT%H:%M:%SZ) ──
+# ── ${nome} (Dokploy ou Docker Manager da Hostinger) — gerado em $(date -u +%Y-%m-%dT%H:%M:%SZ) ──
 # Guarde este bloco num gerenciador de senhas. NÃO gere de novo depois de instalar.
 
 # Domínio e primeiro administrador
@@ -113,10 +114,10 @@ APP_LOCALE=pt-BR
 SIGNUP_MODE=so_convite
 DISABLE_SIGNUP=true
 
-# Versão das imagens: número fixo, sempre. Para atualizar, troque aqui e faça Deploy.
+# Versão das imagens: número fixo, sempre. Para atualizar, troque aqui e implante de novo.
 IMAGE_TAG=${versao}
 
-# Traefik do Dokploy (os nomes padrão do Dokploy)
+# Traefik do Dokploy (os nomes padrão do Dokploy; o compose da Hostinger não as lê)
 TRAEFIK_NETWORK=dokploy-network
 TRAEFIK_ENTRYPOINT=websecure
 TRAEFIK_ENTRYPOINT_HTTP=web

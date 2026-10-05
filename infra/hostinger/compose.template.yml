@@ -1,0 +1,549 @@
+# MOLDE do docker-compose.hostinger.yml — NÃO é o arquivo que se cola no painel.
+#
+# O arquivo final é GERADO a partir deste molde por
+#   pnpm compose:hostinger
+# e o gerador faz duas coisas:
+#   1. troca a linha `#@crm-env` pelo bloco `x-crm-env` do docker-compose.dokploy.yml
+#      (a MESMA lista de variáveis do CRM, com DEPLOY_MODE=hostinger);
+#   2. troca cada linha `#@arquivo <caminho>` pelo conteúdo do arquivo, com todo
+#      `$` escrito `$$` — o compose interpolaria `${…}` dentro dele.
+# O gate tests/shell/hostinger-compose.test.sh reprova arquivo gerado fora de dia.
+#
+# ImobCRM / DeskcommCRM no DOCKER MANAGER DA HOSTINGER — tudo numa VPS:
+# Supabase + CRM, atrás do Traefik que a Hostinger instala.
+#
+# COMO USAR (passo a passo em docs/imobiliario/05-instalacao-hostinger-docker-manager.md)
+# --------------------------------------------------------------------------------------
+#   1. No terminal da VPS, gere as variáveis:
+#        bash gerar-env.sh --dominio crm.suaempresa.com.br --email voce@suaempresa.com.br --versao X.Y.Z
+#   2. Docker Manager › Compose: cole ESTE ARQUIVO INTEIRO no editor YAML e o
+#      bloco gerado no passo 1 nas variáveis de ambiente. Implante.
+#
+# AUTOCONTIDO
+# -----------
+#   Diferente do Dokploy, aqui o painel recebe só o YAML, sem o repositório ao
+#   lado. Por isso os arquivos do Supabase (init do banco, configuração do
+#   gateway) e o script de preparo vêm DENTRO deste arquivo, em `configs:` no
+#   fim. O schema do banco (baseline.sql) é baixado da tag da versão pelo setup.
+#   Exige Docker Compose 2.23.1 ou mais novo (`configs` com `content`).
+#
+# TRAEFIK DA HOSTINGER
+# --------------------
+#   O Traefik da Hostinger roda com `network_mode: host`, fora de qualquer rede
+#   Docker, e alcança os contêineres pela rede padrão deste projeto
+#   (<projeto>_default) — por isso `traefik.docker.network` nas labels. Nenhuma
+#   porta é publicada no host: publicar o app ou o gateway abriria um caminho
+#   que contorna o Traefik (e o bloqueio do webhook do WhatsApp que mora nele).
+#   Domínio: DOMAIN (ex.: crmimob.re9imob.com.br), com o DNS apontando para a VPS.
+#   Router e middleware levam o nome do projeto, para não colidir com outro
+#   projeto no mesmo Traefik.
+#
+# O QUE SOBE
+# ----------
+#   Supabase: db, auth, rest, realtime, storage, imgproxy e o gateway (api-gw).
+#   CRM: setup (roda e sai), app, worker, scheduler, waha, redis, srh.
+#   Memória: todo serviço tem mem_limit; a soma dos que ficam no ar é ~6,6 GB.
+#
+# Os arquivos do Supabase embutidos são cópia fixa da versão oficial
+# self-hosted/v0.8.1 (infra/dokploy/supabase/, Apache-2.0).
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+#@crm-env
+
+services:
+  # ══════════════════════════════ SUPABASE ══════════════════════════════════
+  db:
+    image: supabase/postgres:17.6.1.136
+    restart: unless-stopped
+    mem_limit: 1536m
+    networks:
+      default:
+        aliases: [imobcrm-db]
+    configs:
+      - source: db-realtime
+        target: /docker-entrypoint-initdb.d/migrations/99-realtime.sql
+      - source: db-webhooks
+        target: /docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql
+      - source: db-roles
+        target: /docker-entrypoint-initdb.d/init-scripts/99-roles.sql
+      - source: db-jwt
+        target: /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql
+      - source: db-supabase
+        target: /docker-entrypoint-initdb.d/migrations/97-_supabase.sql
+      - source: db-logs
+        target: /docker-entrypoint-initdb.d/migrations/99-logs.sql
+      - source: db-pooler
+        target: /docker-entrypoint-initdb.d/migrations/99-pooler.sql
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - db-config:/etc/postgresql-custom
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: 5432
+      POSTGRES_PORT: 5432
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: postgres
+      POSTGRES_DB: postgres
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET}
+      JWT_EXP: 3600
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal",
+              "-c", "shared_buffers=512MB", "-c", "effective_cache_size=2GB"]
+    logging: *default-logging
+
+  auth:
+    image: supabase/gotrue:v2.196.0
+    restart: unless-stopped
+    mem_limit: 256m
+    networks:
+      default:
+        aliases: [imobcrm-auth]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: https://${DOMAIN}/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
+      GOTRUE_SITE_URL: https://${DOMAIN}
+      GOTRUE_URI_ALLOW_LIST: https://${DOMAIN}/auth/confirm,https://${DOMAIN}/**
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_ISSUER: https://${DOMAIN}/auth/v1
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "false"
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_FROM_EMAIL:-}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${SMTP_USERNAME:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASSWORD:-}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_FROM_NAME:-}
+      GOTRUE_MAILER_URLPATHS_INVITE: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/v1/verify
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_SMS_AUTOCONFIRM: "false"
+    logging: *default-logging
+
+  rest:
+    image: postgrest/postgrest:v14.17
+    restart: unless-stopped
+    mem_limit: 256m
+    networks:
+      default:
+        aliases: [imobcrm-rest]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "postgrest", "--ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
+      PGRST_DB_SCHEMAS: public,graphql_public
+      PGRST_DB_MAX_ROWS: 1000
+      PGRST_DB_EXTRA_SEARCH_PATH: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_ADMIN_SERVER_PORT: 3001
+      PGRST_ADMIN_SERVER_HOST: localhost
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
+      PGRST_APP_SETTINGS_JWT_EXP: 3600
+    command: ["postgrest"]
+    logging: *default-logging
+
+  realtime:
+    image: supabase/realtime:v2.134.10
+    restart: unless-stopped
+    mem_limit: 512m
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      default:
+        aliases: [imobcrm-realtime, realtime-dev.supabase-realtime]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sSfL --head -o /dev/null -H \"Authorization: Bearer ${ANON_KEY}\" http://localhost:4000/api/tenants/realtime-dev/health"]
+      timeout: 5s
+      interval: 30s
+      retries: 3
+      start_period: 10s
+    environment:
+      PORT: 4000
+      DB_HOST: imobcrm-db
+      DB_PORT: 5432
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: postgres
+      DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime"
+      # 16 caracteres, gerado pelo gerar-env.sh. Não troque depois de instalar.
+      DB_ENC_KEY: ${REALTIME_DB_ENC_KEY:?defina REALTIME_DB_ENC_KEY (16 caracteres, sai do gerar-env.sh)}
+      API_JWT_SECRET: ${JWT_SECRET}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?defina SECRET_KEY_BASE}
+      METRICS_JWT_SECRET: ${JWT_SECRET}
+      ERL_AFLAGS: -proto_dist inet_tcp
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+      RUN_JANITOR: "true"
+      DISABLE_HEALTHCHECK_LOGGING: "true"
+    logging: *default-logging
+
+  storage:
+    image: supabase/storage-api:v1.74.0
+    restart: unless-stopped
+    mem_limit: 384m
+    networks:
+      default:
+        aliases: [imobcrm-storage]
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      imgproxy:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://imobcrm-storage:5000/status"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+      start_period: 10s
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://imobcrm-rest:3000
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
+      STORAGE_PUBLIC_URL: https://${DOMAIN}
+      REQUEST_ALLOW_X_FORWARDED_PATH: "true"
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      GLOBAL_S3_BUCKET: stub
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      ENABLE_IMAGE_TRANSFORMATION: "true"
+      IMGPROXY_URL: http://imobcrm-imgproxy:5001
+    volumes:
+      - storage-data:/var/lib/storage
+    logging: *default-logging
+
+  imgproxy:
+    image: darthsim/imgproxy:v3.31.4
+    restart: unless-stopped
+    mem_limit: 512m
+    networks:
+      default:
+        aliases: [imobcrm-imgproxy]
+    volumes:
+      - storage-data:/var/lib/storage
+    healthcheck:
+      test: ["CMD", "imgproxy", "health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      IMGPROXY_BIND: ":5001"
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
+      IMGPROXY_USE_ETAG: "true"
+      IMGPROXY_AUTO_WEBP: "true"
+      IMGPROXY_MAX_SRC_RESOLUTION: 16.8
+      IMGPROXY_WORKERS: "2"
+      IMGPROXY_CONCURRENCY: "2"
+    logging: *default-logging
+
+  api-gw:
+    image: envoyproxy/envoy:v1.39.1
+    restart: unless-stopped
+    mem_limit: 256m
+    depends_on:
+      auth:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      storage:
+        condition: service_started
+    networks:
+      default:
+        aliases: [imobcrm-gw, envoy, kong]
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/8000'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    configs:
+      - source: gw-envoy
+        target: /etc/envoy/envoy.yaml
+      # O cds.yaml oficial entra INTACTO como cds.src.yaml; a entrada grava
+      # /etc/envoy/cds.yaml com os apelidos imobcrm-* e chama a entrada oficial.
+      - source: gw-cds
+        target: /etc/envoy/cds.src.yaml
+      - source: gw-entrada
+        target: /gateway-entrypoint.sh
+      - source: gw-lds
+        target: /etc/envoy/lds.template.yaml
+      - source: gw-entrada-oficial
+        target: /docker-entrypoint.sh
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      SUPABASE_PUBLISHABLE_KEY: ""
+      SUPABASE_SECRET_KEY: ""
+      ANON_KEY_ASYMMETRIC: ""
+      SERVICE_ROLE_KEY_ASYMMETRIC: ""
+      SUPABASE_PUBLIC_URL: https://${DOMAIN}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-supabase}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?defina DASHBOARD_PASSWORD}
+    entrypoint: ["/bin/sh", "/gateway-entrypoint.sh"]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${COMPOSE_PROJECT_NAME}_default
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-supabase.rule=Host(`${DOMAIN}`) && (PathPrefix(`/auth/v1`) || PathPrefix(`/rest/v1`) || PathPrefix(`/realtime/v1`) || PathPrefix(`/storage/v1`) || PathPrefix(`/functions/v1`) || PathPrefix(`/graphql/v1`))
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-supabase.entrypoints=websecure
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-supabase.tls.certresolver=letsencrypt
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-supabase.priority=900
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-supabase.service=${COMPOSE_PROJECT_NAME}-supabase
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}-supabase.loadbalancer.server.port=8000
+    logging: *default-logging
+
+  # ════════════════════════════════ CRM ═════════════════════════════════════
+  # Roda a cada implantação e sai: schema (baseline.sql da versão) e primeiro administrador.
+  setup:
+    image: postgres:17.6-alpine3.22
+    restart: "no"
+    mem_limit: 256m
+    depends_on:
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+      rest:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/primeira-instalacao.sh"]
+    configs:
+      - source: setup-script
+        target: /primeira-instalacao.sh
+    environment:
+      IMAGE_TAG: ${IMAGE_TAG:?defina IMAGE_TAG com uma versão publicada, ex. 1.57.0}
+      # Sem o repositório ao lado, o schema vem SEMPRE da tag da versão.
+      BASELINE_FONTE: versao
+      DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
+      AUTH_URL: http://imobcrm-auth:9999
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      OWNER_EMAIL: ${OWNER_EMAIL:?defina OWNER_EMAIL}
+      OWNER_PASSWORD: ${OWNER_PASSWORD:-}
+      APP_LOCALE: ${APP_LOCALE:-pt-BR}
+      NUVEMSHOP_OAUTH_ENCRYPTION_KEY: ${NUVEMSHOP_OAUTH_ENCRYPTION_KEY}
+    logging: *default-logging
+
+  app:
+    image: ghcr.io/renoribeiro/deskcommcrm:${IMAGE_TAG:?defina IMAGE_TAG com uma versão publicada, ex. 1.57.0}
+    pull_policy: missing
+    restart: unless-stopped
+    mem_limit: 768m
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      srh:
+        condition: service_started
+      waha:
+        condition: service_started
+    environment:
+      <<: *crm-env
+    networks:
+      default:
+        aliases: [imobcrm-app]
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${COMPOSE_PROJECT_NAME}_default
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls.certresolver=letsencrypt
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.middlewares=${COMPOSE_PROJECT_NAME}-compress
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.service=${COMPOSE_PROJECT_NAME}
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=3000
+      - traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-compress.compress=true
+      # O webhook GLOBAL do WAHA só é chamado de dentro (o WAHA fala com
+      # http://imobcrm-app:3000). Pelo Traefik ele é negado.
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-waha-block.rule=Host(`${DOMAIN}`) && Path(`/api/v1/webhooks/waha`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-waha-block.entrypoints=websecure
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-waha-block.tls.certresolver=letsencrypt
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-waha-block.priority=1000
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-waha-block.service=${COMPOSE_PROJECT_NAME}
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-waha-block.middlewares=${COMPOSE_PROJECT_NAME}-deny
+      - traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-deny.ipallowlist.sourcerange=192.0.2.1/32
+    logging: *default-logging
+
+  worker:
+    image: ghcr.io/renoribeiro/deskcomm-worker:${IMAGE_TAG:?defina IMAGE_TAG com uma versão publicada, ex. 1.57.0}
+    pull_policy: missing
+    restart: unless-stopped
+    mem_limit: 512m
+    networks:
+      default:
+        aliases: [imobcrm-worker]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    environment:
+      <<: *crm-env
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8787/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging
+
+  scheduler:
+    image: ghcr.io/renoribeiro/deskcomm-scheduler:${IMAGE_TAG:?defina IMAGE_TAG com uma versão publicada, ex. 1.57.0}
+    pull_policy: missing
+    restart: unless-stopped
+    mem_limit: 128m
+    networks:
+      default:
+        aliases: [imobcrm-scheduler]
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      TZ: UTC
+      INTERNAL_SECRET: ${INTERNAL_SECRET}
+      SCHEDULER_APP_ORIGIN: http://imobcrm-app:3000
+    logging: *default-logging
+
+  waha:
+    image: devlikeapro/waha:latest-2026.7.2
+    restart: unless-stopped
+    mem_limit: 1280m
+    networks:
+      default:
+        aliases: [imobcrm-waha]
+    environment:
+      WAHA_API_KEY: "sha512:${WAHA_API_KEY_SHA512:?defina WAHA_API_KEY_SHA512}"
+      WHATSAPP_HOOK_URL: http://imobcrm-app:3000/api/v1/webhooks/waha
+      WHATSAPP_HOOK_EVENTS: "message.any,message.ack,message.edited,message.revoked,session.status,state.change"
+      WHATSAPP_HOOK_HMAC: ${WAHA_HMAC_SECRET}
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WAHA_DASHBOARD_ENABLED: "false"
+      WHATSAPP_RESTART_ALL_SESSIONS: "True"
+    volumes:
+      - waha-data:/app/.sessions
+      - waha-media:/app/.media
+    logging: *default-logging
+
+  redis:
+    image: redis:7.4.11-alpine3.21
+    restart: unless-stopped
+    mem_limit: 192m
+    networks:
+      default:
+        aliases: [imobcrm-redis]
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    logging: *default-logging
+
+  srh:
+    image: hiett/serverless-redis-http@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150
+    restart: unless-stopped
+    mem_limit: 128m
+    networks:
+      default:
+        aliases: [imobcrm-srh]
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: ${SRH_TOKEN}
+      SRH_CONNECTION_STRING: "redis://imobcrm-redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    logging: *default-logging
+
+volumes:
+  db-data:
+  db-config:
+  storage-data:
+  waha-data:
+  waha-media:
+
+# ═════════════════════ ARQUIVOS EMBUTIDOS (gerados) ═══════════════════════
+configs:
+  db-realtime:
+    content: |
+      #@arquivo infra/dokploy/supabase/db/realtime.sql
+  db-webhooks:
+    content: |
+      #@arquivo infra/dokploy/supabase/db/webhooks.sql
+  db-roles:
+    content: |
+      #@arquivo infra/dokploy/supabase/db/roles.sql
+  db-jwt:
+    content: |
+      #@arquivo infra/dokploy/supabase/db/jwt.sql
+  db-supabase:
+    content: |
+      #@arquivo infra/dokploy/supabase/db/_supabase.sql
+  db-logs:
+    content: |
+      #@arquivo infra/dokploy/supabase/db/logs.sql
+  db-pooler:
+    content: |
+      #@arquivo infra/dokploy/supabase/db/pooler.sql
+  gw-envoy:
+    content: |
+      #@arquivo infra/dokploy/supabase/api/envoy/envoy.yaml
+  gw-cds:
+    content: |
+      #@arquivo infra/dokploy/supabase/api/envoy/cds.yaml
+  gw-lds:
+    content: |
+      #@arquivo infra/dokploy/supabase/api/envoy/lds.template.yaml
+  gw-entrada-oficial:
+    content: |
+      #@arquivo infra/dokploy/supabase/api/envoy/docker-entrypoint.sh
+  gw-entrada:
+    content: |
+      #@arquivo infra/dokploy/gateway-entrypoint.sh
+  setup-script:
+    content: |
+      #@arquivo infra/dokploy/primeira-instalacao.sh
