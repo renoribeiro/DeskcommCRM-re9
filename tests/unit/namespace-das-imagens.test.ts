@@ -250,6 +250,22 @@ describe("o compose do Dokploy diz o mesmo que o kit", () => {
   });
 });
 
+describe("o compose da Hostinger diz o mesmo que o kit", () => {
+  // `docker-compose.hostinger.yml` é GERADO (pnpm compose:hostinger), mas as
+  // linhas de imagem vêm do molde, escritas à mão — a QUARTA declaração de onde
+  // as imagens moram. Conferida contra IMG_NS pelo mesmo motivo da do Dokploy.
+  const servicos = ["app", "worker", "scheduler"] as const;
+  servicos.forEach((servico, i) => {
+    it(`a imagem de ${servico} usa o namespace de IMG_NS`, () => {
+      const texto = fs.readFileSync(path.join(RAIZ, "docker-compose.hostinger.yml"), "utf8");
+      const bloco = texto.split(new RegExp(`^  ${servico}:\\s*$`, "m"))[1] ?? "";
+      const m = bloco.match(/^\s*image: (\S+):\$\{IMAGE_TAG:\?defina IMAGE_TAG [^}]+\}\s*$/m);
+      expect(m, `não achei \`image: <ref>:\${IMAGE_TAG:?defina IMAGE_TAG …}\` no serviço ${servico}`).not.toBeNull();
+      expect(m![1]).toBe(`${imgNs()}/${reposDoKit()[i]}`);
+    });
+  });
+});
+
 describe("o kit aponta para o que o CI realmente publica", () => {
   it("os defaults de código e os labels de origem apontam para este repositório", () => {
     // A URL DERIVA do namespace, e não é economia de digitação: é o que prende a
@@ -357,6 +373,10 @@ describe("catraca: ninguém mais repete o namespace", () => {
     "docker-compose.prod.yml",
     // Deploy pelo Dokploy (CRM + Supabase, sem o kit); conferido acima.
     "docker-compose.dokploy.yml",
+    // Instalação pelo Docker Manager da Hostinger: o arquivo gerado e o molde
+    // de onde as linhas de imagem saem; conferido acima.
+    "docker-compose.hostinger.yml",
+    "infra/hostinger/compose.template.yml",
     ".env.hostgator.example",
     // FIXTURE de comentário REAL de PR, capturada para os instrumentos de triagem.
     // O literal aparece dentro do texto que um humano escreveu num PR

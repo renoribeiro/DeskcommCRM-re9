@@ -246,6 +246,36 @@ describe("instalação pelo Dokploy: quem leva o modo ao GoTrue é o Environment
   });
 });
 
+describe("instalação pelo Docker Manager da Hostinger: as variáveis do projeto + nova implantação", () => {
+  it("'só convite' com o GoTrue aberto → ensina a chave nas variáveis da Hostinger, sem citar o Dokploy", async () => {
+    vi.stubEnv("SINGLE_SERVER", "0");
+    env.DEPLOY_MODE = "hostinger";
+    cena.modo = "so_convite";
+    cena.settings = { disable_signup: false };
+
+    await abrirTela();
+
+    expect(screen.getByText(TITULO)).toBeInTheDocument();
+    expect(screen.getByText(/nas variáveis de ambiente e implante de novo/)).toBeInTheDocument();
+    expect(screen.getByText("DISABLE_SIGNUP=true")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Dokploy/);
+    expect(document.body.textContent).not.toMatch(/update\.sh/);
+    expect(document.body.textContent).not.toMatch(/Authentication → Sign In/);
+  });
+
+  it("valor de DEPLOY_MODE desconhecido não vira painel: cai no caminho de sempre", async () => {
+    vi.stubEnv("SINGLE_SERVER", "0");
+    env.DEPLOY_MODE = "outro-painel";
+    cena.modo = "so_convite";
+    cena.settings = { disable_signup: false };
+
+    await abrirTela();
+
+    expect(document.body.textContent).not.toMatch(/Dokploy|Hostinger/);
+    expect(document.body.textContent).toMatch(/Authentication → Sign In/);
+  });
+});
+
 describe("a régua do aviso é a mesma do kit (#1665)", () => {
   it("só o modo 'so convite' espera disable_signup=true", () => {
     expect(disableSignupEsperado("so_convite")).toBe(true);

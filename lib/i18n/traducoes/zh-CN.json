@@ -5420,5 +5420,9 @@
   "Muitos pedidos de token. Tente em um minuto.": "令牌请求过多。请一分钟后再试。",
   "won_reason inválido (texto de até 500 caracteres).": "won_reason 无效（最多 500 个字符的文本）。",
   "O papel do token não pode ser maior que o seu.": "令牌的角色不能高于你的角色。",
-  "Esta instalação não tem a chave de criptografia de CPF configurada (CPF_ENCRYPTION_KEY). Salve o contato sem CPF ou peça a quem administra o servidor para configurá-la.": "本安装未配置 CPF 加密密钥（CPF_ENCRYPTION_KEY）。请在不填写 CPF 的情况下保存联系人，或请服务器管理员进行配置。"
+  "Esta instalação não tem a chave de criptografia de CPF configurada (CPF_ENCRYPTION_KEY). Salve o contato sem CPF ou peça a quem administra o servidor para configurá-la.": "本安装未配置 CPF 加密密钥（CPF_ENCRYPTION_KEY）。请在不填写 CPF 的情况下保存联系人，或请服务器管理员进行配置。",
+  "Nesta instalação pelo Docker Manager da Hostinger, o cadastro direto só acompanha a troca depois de uma nova implantação: o CRM já segue o modo novo, mas o login continua com o modo anterior. Esta tela só avisa — nada é corrigido aqui.": "在这个通过 Hostinger Docker Manager 安装的实例中，直接注册要在重新部署之后才会跟随更改：CRM 已经使用新模式，但登录服务仍保持旧模式。此页面仅作提示，这里不会进行任何修改。",
+  "No Docker Manager da Hostinger, abra o projeto do CRM, ajuste esta chave nas variáveis de ambiente e implante de novo:": "在 Hostinger 的 Docker Manager 中打开 CRM 项目，在环境变量中调整此配置项，然后重新部署：",
+  "O e-mail do login é configurado no Docker Manager da Hostinger.": "登录邮件在 Hostinger 的 Docker Manager 中配置。",
+  "O servidor salvo aqui envia os e-mails do CRM (convites, avisos, LGPD). Os e-mails de \"esqueci a senha\" e de confirmação de cadastro saem pelas variáveis SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD e SMTP_FROM_EMAIL do projeto no Docker Manager da Hostinger. Preencha lá os mesmos dados e implante de novo.": "此处保存的服务器用于发送 CRM 邮件（邀请、提醒、LGPD）。“忘记密码”和注册确认邮件则通过 Hostinger Docker Manager 中该项目的 SMTP_HOST、SMTP_PORT、SMTP_USERNAME、SMTP_PASSWORD 和 SMTP_FROM_EMAIL 变量发送。请在那里填写相同的信息并重新部署。"
 }

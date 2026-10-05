@@ -1,0 +1,2520 @@
+# ARQUIVO GERADO — não edite à mão.
+#   Origem: infra/hostinger/compose.template.yml + docker-compose.dokploy.yml (x-crm-env) + arquivos de infra/dokploy/.
+#   Para mudar: edite a origem e rode `pnpm compose:hostinger`.
+#
+# ImobCRM / DeskcommCRM no DOCKER MANAGER DA HOSTINGER — tudo numa VPS:
+# Supabase + CRM, atrás do Traefik que a Hostinger instala.
+#
+# COMO USAR (passo a passo em docs/imobiliario/05-instalacao-hostinger-docker-manager.md)
+# --------------------------------------------------------------------------------------
+#   1. No terminal da VPS, gere as variáveis:
+#        bash gerar-env.sh --dominio crm.suaempresa.com.br --email voce@suaempresa.com.br --versao X.Y.Z
+#   2. Docker Manager › Compose: cole ESTE ARQUIVO INTEIRO no editor YAML e o
+#      bloco gerado no passo 1 nas variáveis de ambiente. Implante.
+#
+# AUTOCONTIDO
+# -----------
+#   Diferente do Dokploy, aqui o painel recebe só o YAML, sem o repositório ao
+#   lado. Por isso os arquivos do Supabase (init do banco, configuração do
+#   gateway) e o script de preparo vêm DENTRO deste arquivo, em `configs:` no
+#   fim. O schema do banco (baseline.sql) é baixado da tag da versão pelo setup.
+#   Exige Docker Compose 2.23.1 ou mais novo (`configs` com `content`).
+#
+# TRAEFIK DA HOSTINGER
+# --------------------
+#   O Traefik da Hostinger roda com `network_mode: host`, fora de qualquer rede
+#   Docker, e alcança os contêineres pela rede padrão deste projeto
+#   (<projeto>_default) — por isso `traefik.docker.network` nas labels. Nenhuma
+#   porta é publicada no host: publicar o app ou o gateway abriria um caminho
+#   que contorna o Traefik (e o bloqueio do webhook do WhatsApp que mora nele).
+#   Domínio: DOMAIN (ex.: crmimob.re9imob.com.br), com o DNS apontando para a VPS.
+#   Router e middleware levam o nome do projeto, para não colidir com outro
+#   projeto no mesmo Traefik.
+#
+# O QUE SOBE
+# ----------
+#   Supabase: db, auth, rest, realtime, storage, imgproxy e o gateway (api-gw).
+#   CRM: setup (roda e sai), app, worker, scheduler, waha, redis, srh.
+#   Memória: todo serviço tem mem_limit; a soma dos que ficam no ar é ~6,6 GB.
+#
+# Os arquivos do Supabase embutidos são cópia fixa da versão oficial
+# self-hosted/v0.8.1 (infra/dokploy/supabase/, Apache-2.0).
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-crm-env: &crm-env
+  NODE_ENV: production
+  # Diz às telas de /admin que o login (GoTrue) desta instalação lê SMTP e
+  # cadastro das variáveis do Docker Manager da Hostinger — e que só uma nova
+  # implantação as aplica.
+  DEPLOY_MODE: hostinger
+  # ── Endereços (apelidos únicos da rede privada; ver o cabeçalho) ──
+  NEXT_PUBLIC_APP_URL: https://${DOMAIN:?defina DOMAIN}
+  NEXT_PUBLIC_ADMIN_URL: https://${DOMAIN}
+  NEXT_PUBLIC_SUPABASE_URL: https://${DOMAIN}
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: ${ANON_KEY:?defina ANON_KEY}
+  SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:?defina SERVICE_ROLE_KEY}
+  SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
+  # Vazio de propósito: o CRM fala com o banco pelo papel `postgres` do próprio
+  # Supabase local; a URL de administrador é do kit com Supabase de fora.
+  SUPABASE_DB_ADMIN_URL: ""
+  WAHA_API_BASE_URL: http://imobcrm-waha:3000
+  WAHA_WEBHOOK_BASE_URL: http://imobcrm-app:3000
+  UPSTASH_REDIS_REST_URL: http://imobcrm-srh:80
+  UPSTASH_REDIS_REST_TOKEN: ${SRH_TOKEN:?defina SRH_TOKEN}
+  # ── Segredos obrigatórios (saem do gerar-env.sh) ──
+  INTERNAL_SECRET: ${INTERNAL_SECRET:?defina INTERNAL_SECRET}
+  INVITE_TOKEN_SECRET: ${INVITE_TOKEN_SECRET:-}
+  OAUTH_STATE_SECRET: ${OAUTH_STATE_SECRET:-}
+  INTERNAL_CRON_SECRET: ${INTERNAL_CRON_SECRET:?defina INTERNAL_CRON_SECRET}
+  NUVEMSHOP_OAUTH_ENCRYPTION_KEY: ${NUVEMSHOP_OAUTH_ENCRYPTION_KEY:?defina NUVEMSHOP_OAUTH_ENCRYPTION_KEY}
+  CPF_ENCRYPTION_KEY: ${CPF_ENCRYPTION_KEY:?defina CPF_ENCRYPTION_KEY}
+  AI_CRED_AES_KEY: ${AI_CRED_AES_KEY:?defina AI_CRED_AES_KEY}
+  WAHA_BYO_ENCRYPTION_KEY: ${WAHA_BYO_ENCRYPTION_KEY:?defina WAHA_BYO_ENCRYPTION_KEY}
+  IMPERSONATE_COOKIE_SECRET: ${IMPERSONATE_COOKIE_SECRET:?defina IMPERSONATE_COOKIE_SECRET}
+  LGPD_SIGNING_KEY: ${LGPD_SIGNING_KEY:?defina LGPD_SIGNING_KEY}
+  WAHA_API_KEY: ${WAHA_API_KEY:?defina WAHA_API_KEY}
+  WAHA_HMAC_SECRET: ${WAHA_HMAC_SECRET:?defina WAHA_HMAC_SECRET}
+  # Desligado por padrão, como no kit: o WAHA Core (a imagem abaixo) NÃO assina
+  # os webhooks — medido na 2026.7.2 (docs/testing/user-journey-map.md) —, e
+  # exigir assinatura derrubaria a entrada de TODA mensagem. Ligue (true) só com
+  # WAHA Plus. A defesa que vale sem assinatura é de rede: ver o `app`.
+  WAHA_WEBHOOK_REQUIRE_SIGNATURE: ${WAHA_WEBHOOK_REQUIRE_SIGNATURE:-false}
+  # ── Comportamento do CRM ──
+  APP_NAME: ${APP_NAME:-DeskcommCRM}
+  APP_LOGO_URL: ${APP_LOGO_URL:-}
+  APP_ACCENT_HEX: ${APP_ACCENT_HEX:-}
+  SIGNUP_MODE: ${SIGNUP_MODE:-aberto}
+  SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+  AGENT_DISPATCH_CONSUMER: ${AGENT_DISPATCH_CONSUMER:-engine}
+  INTERNAL_AGENT_RUN_STUB: "false"
+  AI_BUDGET_ENFORCEMENT: ${AI_BUDGET_ENFORCEMENT:-on}
+  LLM_CALL_TIMEOUT_MS: ${LLM_CALL_TIMEOUT_MS:-90000}
+  LLM_TURN_TIMEOUT_MS: ${LLM_TURN_TIMEOUT_MS:-300000}
+  DISCLOSURE_MODE: ${DISCLOSURE_MODE:-}
+  PROMISE_SEMANTIC_ENABLED: ${PROMISE_SEMANTIC_ENABLED:-}
+  TENANT_PROVISIONING_SECRET: ${TENANT_PROVISIONING_SECRET:-}
+  EXTENSIONS_LOCAL_CATALOG_ORIGIN: ${EXTENSIONS_LOCAL_CATALOG_ORIGIN:-}
+  SENTRY_DSN: ${SENTRY_DSN:-off}
+  # ── IA ──
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-}
+  OPENROUTER_APP_URL: ${OPENROUTER_APP_URL:-}
+  OPENROUTER_APP_TITLE: ${OPENROUTER_APP_TITLE:-}
+  AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
+  AI_GATEWAY_BASE_URL: ${AI_GATEWAY_BASE_URL:-}
+  VERCEL_AI_GATEWAY_URL: ${VERCEL_AI_GATEWAY_URL:-}
+  TRANSCRIPTION_API_KEY: ${TRANSCRIPTION_API_KEY:-}
+  TRANSCRIPTION_BASE_URL: ${TRANSCRIPTION_BASE_URL:-}
+  TRANSCRIPTION_MODEL: ${TRANSCRIPTION_MODEL:-}
+  TRANSCRIPTION_LANGUAGES: ${TRANSCRIPTION_LANGUAGES:-}
+  IA_DESTINOS_INTERNOS_PERMITIDOS: ${IA_DESTINOS_INTERNOS_PERMITIDOS:-}
+  JEV_API_BASE_URL: ${JEV_API_BASE_URL:-}
+  # ── E-mail ──
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+  SMTP_FROM_NAME: ${SMTP_FROM_NAME:-}
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
+  # ── Notificações (Web Push) ──
+  VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+  VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+  # ── LGPD ──
+  LGPD_EXPORT_EXPIRES_HOURS: ${LGPD_EXPORT_EXPIRES_HOURS:-72}
+  LGPD_DPO_EMAIL: ${LGPD_DPO_EMAIL:-}
+  # ── Integrações ──
+  GOOGLE_CALENDAR_CLIENT_ID: ${GOOGLE_CALENDAR_CLIENT_ID:-}
+  GOOGLE_CALENDAR_CLIENT_SECRET: ${GOOGLE_CALENDAR_CLIENT_SECRET:-}
+  GOOGLE_ADS_DEVELOPER_TOKEN: ${GOOGLE_ADS_DEVELOPER_TOKEN:-}
+  GOOGLE_ADS_OAUTH_CLIENT_ID: ${GOOGLE_ADS_OAUTH_CLIENT_ID:-}
+  GOOGLE_ADS_OAUTH_CLIENT_SECRET: ${GOOGLE_ADS_OAUTH_CLIENT_SECRET:-}
+  META_WEBHOOK_BASE_URL: ${META_WEBHOOK_BASE_URL:-}
+  META_GRAPH_BASE_URL: ${META_GRAPH_BASE_URL:-}
+  META_ADS_GRAPH_BASE_URL: ${META_ADS_GRAPH_BASE_URL:-}
+  NUVEMSHOP_ENABLED: ${NUVEMSHOP_ENABLED:-false}
+  NUVEMSHOP_APP_ID: ${NUVEMSHOP_APP_ID:-}
+  NUVEMSHOP_CLIENT_ID: ${NUVEMSHOP_CLIENT_ID:-}
+  NUVEMSHOP_CLIENT_SECRET: ${NUVEMSHOP_CLIENT_SECRET:-}
+  WACALLS_API_BASE_URL: ${WACALLS_API_BASE_URL:-}
+  WACALLS_API_TOKEN: ${WACALLS_API_TOKEN:-}
+  DATAFY_ENABLED: ${DATAFY_ENABLED:-}
+  # ── Retenção (vazio = o padrão do produto; ver lib/retencao/politica.ts) ──
+  WEBHOOK_LOG_BODY_RETENTION_DAYS: ${WEBHOOK_LOG_BODY_RETENTION_DAYS:-7}
+  WEBHOOK_LOG_ROW_RETENTION_DAYS: ${WEBHOOK_LOG_ROW_RETENTION_DAYS:-90}
+  LEAD_CAPTURE_RETENTION_DAYS: ${LEAD_CAPTURE_RETENTION_DAYS:-}
+  JOB_QUEUE_RETENTION_DAYS: ${JOB_QUEUE_RETENTION_DAYS:-}
+  AUDIT_LOG_RETENTION_DAYS: ${AUDIT_LOG_RETENTION_DAYS:-}
+  CASE_CHAT_RETENTION_DAYS: ${CASE_CHAT_RETENTION_DAYS:-}
+  PASSAGEM_RETENTION_DAYS: ${PASSAGEM_RETENTION_DAYS:-}
+  CASE_ALERT_RETENTION_DAYS: ${CASE_ALERT_RETENTION_DAYS:-}
+  PROSPECCAO_RETENTION_DAYS: ${PROSPECCAO_RETENTION_DAYS:-}
+  JEV_OBSERVACOES_RETENTION_DAYS: ${JEV_OBSERVACOES_RETENTION_DAYS:-}
+  DRAFT_RETENTION_DAYS: ${DRAFT_RETENTION_DAYS:-}
+  GOLDEN_CANDIDATES_RETENTION_DAYS: ${GOLDEN_CANDIDATES_RETENTION_DAYS:-}
+
+services:
+  # ══════════════════════════════ SUPABASE ══════════════════════════════════
+  db:
+    image: supabase/postgres:17.6.1.136
+    restart: unless-stopped
+    mem_limit: 1536m
+    networks:
+      default:
+        aliases: [imobcrm-db]
+    configs:
+      - source: db-realtime
+        target: /docker-entrypoint-initdb.d/migrations/99-realtime.sql
+      - source: db-webhooks
+        target: /docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql
+      - source: db-roles
+        target: /docker-entrypoint-initdb.d/init-scripts/99-roles.sql
+      - source: db-jwt
+        target: /docker-entrypoint-initdb.d/init-scripts/99-jwt.sql
+      - source: db-supabase
+        target: /docker-entrypoint-initdb.d/migrations/97-_supabase.sql
+      - source: db-logs
+        target: /docker-entrypoint-initdb.d/migrations/99-logs.sql
+      - source: db-pooler
+        target: /docker-entrypoint-initdb.d/migrations/99-pooler.sql
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - db-config:/etc/postgresql-custom
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: 5432
+      POSTGRES_PORT: 5432
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: postgres
+      POSTGRES_DB: postgres
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET}
+      JWT_EXP: 3600
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal",
+              "-c", "shared_buffers=512MB", "-c", "effective_cache_size=2GB"]
+    logging: *default-logging
+
+  auth:
+    image: supabase/gotrue:v2.196.0
+    restart: unless-stopped
+    mem_limit: 256m
+    networks:
+      default:
+        aliases: [imobcrm-auth]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: https://${DOMAIN}/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
+      GOTRUE_SITE_URL: https://${DOMAIN}
+      GOTRUE_URI_ALLOW_LIST: https://${DOMAIN}/auth/confirm,https://${DOMAIN}/**
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_ISSUER: https://${DOMAIN}/auth/v1
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "false"
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_FROM_EMAIL:-}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${SMTP_USERNAME:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASSWORD:-}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_FROM_NAME:-}
+      GOTRUE_MAILER_URLPATHS_INVITE: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/v1/verify
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_SMS_AUTOCONFIRM: "false"
+    logging: *default-logging
+
+  rest:
+    image: postgrest/postgrest:v14.17
+    restart: unless-stopped
+    mem_limit: 256m
+    networks:
+      default:
+        aliases: [imobcrm-rest]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "postgrest", "--ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
+      PGRST_DB_SCHEMAS: public,graphql_public
+      PGRST_DB_MAX_ROWS: 1000
+      PGRST_DB_EXTRA_SEARCH_PATH: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_ADMIN_SERVER_PORT: 3001
+      PGRST_ADMIN_SERVER_HOST: localhost
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
+      PGRST_APP_SETTINGS_JWT_EXP: 3600
+    command: ["postgrest"]
+    logging: *default-logging
+
+  realtime:
+    image: supabase/realtime:v2.134.10
+    restart: unless-stopped
+    mem_limit: 512m
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      default:
+        aliases: [imobcrm-realtime, realtime-dev.supabase-realtime]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sSfL --head -o /dev/null -H \"Authorization: Bearer ${ANON_KEY}\" http://localhost:4000/api/tenants/realtime-dev/health"]
+      timeout: 5s
+      interval: 30s
+      retries: 3
+      start_period: 10s
+    environment:
+      PORT: 4000
+      DB_HOST: imobcrm-db
+      DB_PORT: 5432
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: postgres
+      DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime"
+      # 16 caracteres, gerado pelo gerar-env.sh. Não troque depois de instalar.
+      DB_ENC_KEY: ${REALTIME_DB_ENC_KEY:?defina REALTIME_DB_ENC_KEY (16 caracteres, sai do gerar-env.sh)}
+      API_JWT_SECRET: ${JWT_SECRET}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?defina SECRET_KEY_BASE}
+      METRICS_JWT_SECRET: ${JWT_SECRET}
+      ERL_AFLAGS: -proto_dist inet_tcp
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+      RUN_JANITOR: "true"
+      DISABLE_HEALTHCHECK_LOGGING: "true"
+    logging: *default-logging
+
+  storage:
+    image: supabase/storage-api:v1.74.0
+    restart: unless-stopped
+    mem_limit: 384m
+    networks:
+      default:
+        aliases: [imobcrm-storage]
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      imgproxy:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://imobcrm-storage:5000/status"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+      start_period: 10s
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://imobcrm-rest:3000
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
+      STORAGE_PUBLIC_URL: https://${DOMAIN}
+      REQUEST_ALLOW_X_FORWARDED_PATH: "true"
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      GLOBAL_S3_BUCKET: stub
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      ENABLE_IMAGE_TRANSFORMATION: "true"
+      IMGPROXY_URL: http://imobcrm-imgproxy:5001
+    volumes:
+      - storage-data:/var/lib/storage
+    logging: *default-logging
+
+  imgproxy:
+    image: darthsim/imgproxy:v3.31.4
+    restart: unless-stopped
+    mem_limit: 512m
+    networks:
+      default:
+        aliases: [imobcrm-imgproxy]
+    volumes:
+      - storage-data:/var/lib/storage
+    healthcheck:
+      test: ["CMD", "imgproxy", "health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      IMGPROXY_BIND: ":5001"
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
+      IMGPROXY_USE_ETAG: "true"
+      IMGPROXY_AUTO_WEBP: "true"
+      IMGPROXY_MAX_SRC_RESOLUTION: 16.8
+      IMGPROXY_WORKERS: "2"
+      IMGPROXY_CONCURRENCY: "2"
+    logging: *default-logging
+
+  api-gw:
+    image: envoyproxy/envoy:v1.39.1
+    restart: unless-stopped
+    mem_limit: 256m
+    depends_on:
+      auth:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      storage:
+        condition: service_started
+    networks:
+      default:
+        aliases: [imobcrm-gw, envoy, kong]
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/8000'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    configs:
+      - source: gw-envoy
+        target: /etc/envoy/envoy.yaml
+      # O cds.yaml oficial entra INTACTO como cds.src.yaml; a entrada grava
+      # /etc/envoy/cds.yaml com os apelidos imobcrm-* e chama a entrada oficial.
+      - source: gw-cds
+        target: /etc/envoy/cds.src.yaml
+      - source: gw-entrada
+        target: /gateway-entrypoint.sh
+      - source: gw-lds
+        target: /etc/envoy/lds.template.yaml
+      - source: gw-entrada-oficial
+        target: /docker-entrypoint.sh
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      SUPABASE_PUBLISHABLE_KEY: ""
+      SUPABASE_SECRET_KEY: ""
+      ANON_KEY_ASYMMETRIC: ""
+      SERVICE_ROLE_KEY_ASYMMETRIC: ""
+      SUPABASE_PUBLIC_URL: https://${DOMAIN}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-supabase}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?defina DASHBOARD_PASSWORD}
+    entrypoint: ["/bin/sh", "/gateway-entrypoint.sh"]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${COMPOSE_PROJECT_NAME}_default
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-supabase.rule=Host(`${DOMAIN}`) && (PathPrefix(`/auth/v1`) || PathPrefix(`/rest/v1`) || PathPrefix(`/realtime/v1`) || PathPrefix(`/storage/v1`) || PathPrefix(`/functions/v1`) || PathPrefix(`/graphql/v1`))
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-supabase.entrypoints=websecure
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-supabase.tls.certresolver=letsencrypt
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-supabase.priority=900
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-supabase.service=${COMPOSE_PROJECT_NAME}-supabase
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}-supabase.loadbalancer.server.port=8000
+    logging: *default-logging
+
+  # ════════════════════════════════ CRM ═════════════════════════════════════
+  # Roda a cada implantação e sai: schema (baseline.sql da versão) e primeiro administrador.
+  setup:
+    image: postgres:17.6-alpine3.22
+    restart: "no"
+    mem_limit: 256m
+    depends_on:
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+      rest:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/primeira-instalacao.sh"]
+    configs:
+      - source: setup-script
+        target: /primeira-instalacao.sh
+    environment:
+      IMAGE_TAG: ${IMAGE_TAG:?defina IMAGE_TAG com uma versão publicada, ex. 1.57.0}
+      # Sem o repositório ao lado, o schema vem SEMPRE da tag da versão.
+      BASELINE_FONTE: versao
+      DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@imobcrm-db:5432/postgres
+      AUTH_URL: http://imobcrm-auth:9999
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      OWNER_EMAIL: ${OWNER_EMAIL:?defina OWNER_EMAIL}
+      OWNER_PASSWORD: ${OWNER_PASSWORD:-}
+      APP_LOCALE: ${APP_LOCALE:-pt-BR}
+      NUVEMSHOP_OAUTH_ENCRYPTION_KEY: ${NUVEMSHOP_OAUTH_ENCRYPTION_KEY}
+    logging: *default-logging
+
+  app:
+    image: ghcr.io/renoribeiro/deskcommcrm:${IMAGE_TAG:?defina IMAGE_TAG com uma versão publicada, ex. 1.57.0}
+    pull_policy: missing
+    restart: unless-stopped
+    mem_limit: 768m
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      srh:
+        condition: service_started
+      waha:
+        condition: service_started
+    environment:
+      <<: *crm-env
+    networks:
+      default:
+        aliases: [imobcrm-app]
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${COMPOSE_PROJECT_NAME}_default
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls.certresolver=letsencrypt
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.middlewares=${COMPOSE_PROJECT_NAME}-compress
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.service=${COMPOSE_PROJECT_NAME}
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=3000
+      - traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-compress.compress=true
+      # O webhook GLOBAL do WAHA só é chamado de dentro (o WAHA fala com
+      # http://imobcrm-app:3000). Pelo Traefik ele é negado.
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-waha-block.rule=Host(`${DOMAIN}`) && Path(`/api/v1/webhooks/waha`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-waha-block.entrypoints=websecure
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-waha-block.tls.certresolver=letsencrypt
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-waha-block.priority=1000
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-waha-block.service=${COMPOSE_PROJECT_NAME}
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-waha-block.middlewares=${COMPOSE_PROJECT_NAME}-deny
+      - traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-deny.ipallowlist.sourcerange=192.0.2.1/32
+    logging: *default-logging
+
+  worker:
+    image: ghcr.io/renoribeiro/deskcomm-worker:${IMAGE_TAG:?defina IMAGE_TAG com uma versão publicada, ex. 1.57.0}
+    pull_policy: missing
+    restart: unless-stopped
+    mem_limit: 512m
+    networks:
+      default:
+        aliases: [imobcrm-worker]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    environment:
+      <<: *crm-env
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8787/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging
+
+  scheduler:
+    image: ghcr.io/renoribeiro/deskcomm-scheduler:${IMAGE_TAG:?defina IMAGE_TAG com uma versão publicada, ex. 1.57.0}
+    pull_policy: missing
+    restart: unless-stopped
+    mem_limit: 128m
+    networks:
+      default:
+        aliases: [imobcrm-scheduler]
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      TZ: UTC
+      INTERNAL_SECRET: ${INTERNAL_SECRET}
+      SCHEDULER_APP_ORIGIN: http://imobcrm-app:3000
+    logging: *default-logging
+
+  waha:
+    image: devlikeapro/waha:latest-2026.7.2
+    restart: unless-stopped
+    mem_limit: 1280m
+    networks:
+      default:
+        aliases: [imobcrm-waha]
+    environment:
+      WAHA_API_KEY: "sha512:${WAHA_API_KEY_SHA512:?defina WAHA_API_KEY_SHA512}"
+      WHATSAPP_HOOK_URL: http://imobcrm-app:3000/api/v1/webhooks/waha
+      WHATSAPP_HOOK_EVENTS: "message.any,message.ack,message.edited,message.revoked,session.status,state.change"
+      WHATSAPP_HOOK_HMAC: ${WAHA_HMAC_SECRET}
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WAHA_DASHBOARD_ENABLED: "false"
+      WHATSAPP_RESTART_ALL_SESSIONS: "True"
+    volumes:
+      - waha-data:/app/.sessions
+      - waha-media:/app/.media
+    logging: *default-logging
+
+  redis:
+    image: redis:7.4.11-alpine3.21
+    restart: unless-stopped
+    mem_limit: 192m
+    networks:
+      default:
+        aliases: [imobcrm-redis]
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    logging: *default-logging
+
+  srh:
+    image: hiett/serverless-redis-http@sha256:5b0bb9239fce53abf87b2018a7a0deb9ec7bd900c5360738fe5fbeeb426f9150
+    restart: unless-stopped
+    mem_limit: 128m
+    networks:
+      default:
+        aliases: [imobcrm-srh]
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: ${SRH_TOKEN}
+      SRH_CONNECTION_STRING: "redis://imobcrm-redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    logging: *default-logging
+
+volumes:
+  db-data:
+  db-config:
+  storage-data:
+  waha-data:
+  waha-media:
+
+# ═════════════════════ ARQUIVOS EMBUTIDOS (gerados) ═══════════════════════
+configs:
+  db-realtime:
+    content: |
+      \set pguser `echo "$$POSTGRES_USER"`
+
+      create schema if not exists _realtime;
+      alter schema _realtime owner to :pguser;
+  db-webhooks:
+    content: |
+      BEGIN;
+        -- Create pg_net extension
+        CREATE EXTENSION IF NOT EXISTS pg_net SCHEMA extensions;
+        -- Create supabase_functions schema
+        CREATE SCHEMA supabase_functions AUTHORIZATION supabase_admin;
+        GRANT USAGE ON SCHEMA supabase_functions TO postgres, anon, authenticated, service_role;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA supabase_functions GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA supabase_functions GRANT ALL ON FUNCTIONS TO postgres, anon, authenticated, service_role;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA supabase_functions GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
+        -- supabase_functions.migrations definition
+        CREATE TABLE supabase_functions.migrations (
+          version text PRIMARY KEY,
+          inserted_at timestamptz NOT NULL DEFAULT NOW()
+        );
+        -- Initial supabase_functions migration
+        INSERT INTO supabase_functions.migrations (version) VALUES ('initial');
+        -- supabase_functions.hooks definition
+        CREATE TABLE supabase_functions.hooks (
+          id bigserial PRIMARY KEY,
+          hook_table_id integer NOT NULL,
+          hook_name text NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT NOW(),
+          request_id bigint
+        );
+        CREATE INDEX supabase_functions_hooks_request_id_idx ON supabase_functions.hooks USING btree (request_id);
+        CREATE INDEX supabase_functions_hooks_h_table_id_h_name_idx ON supabase_functions.hooks USING btree (hook_table_id, hook_name);
+        COMMENT ON TABLE supabase_functions.hooks IS 'Supabase Functions Hooks: Audit trail for triggered hooks.';
+        CREATE FUNCTION supabase_functions.http_request()
+          RETURNS trigger
+          LANGUAGE plpgsql
+          AS $$function$$
+          DECLARE
+            request_id bigint;
+            payload jsonb;
+            url text := TG_ARGV[0]::text;
+            method text := TG_ARGV[1]::text;
+            headers jsonb DEFAULT '{}'::jsonb;
+            params jsonb DEFAULT '{}'::jsonb;
+            timeout_ms integer DEFAULT 1000;
+          BEGIN
+            IF url IS NULL OR url = 'null' THEN
+              RAISE EXCEPTION 'url argument is missing';
+            END IF;
+
+            IF method IS NULL OR method = 'null' THEN
+              RAISE EXCEPTION 'method argument is missing';
+            END IF;
+
+            IF TG_ARGV[2] IS NULL OR TG_ARGV[2] = 'null' THEN
+              headers = '{"Content-Type": "application/json"}'::jsonb;
+            ELSE
+              headers = TG_ARGV[2]::jsonb;
+            END IF;
+
+            IF TG_ARGV[3] IS NULL OR TG_ARGV[3] = 'null' THEN
+              params = '{}'::jsonb;
+            ELSE
+              params = TG_ARGV[3]::jsonb;
+            END IF;
+
+            IF TG_ARGV[4] IS NULL OR TG_ARGV[4] = 'null' THEN
+              timeout_ms = 1000;
+            ELSE
+              timeout_ms = TG_ARGV[4]::integer;
+            END IF;
+
+            CASE
+              WHEN method = 'GET' THEN
+                SELECT http_get INTO request_id FROM net.http_get(
+                  url,
+                  params,
+                  headers,
+                  timeout_ms
+                );
+              WHEN method = 'POST' THEN
+                payload = jsonb_build_object(
+                  'old_record', OLD,
+                  'record', NEW,
+                  'type', TG_OP,
+                  'table', TG_TABLE_NAME,
+                  'schema', TG_TABLE_SCHEMA
+                );
+
+                SELECT http_post INTO request_id FROM net.http_post(
+                  url,
+                  payload,
+                  params,
+                  headers,
+                  timeout_ms
+                );
+              ELSE
+                RAISE EXCEPTION 'method argument % is invalid', method;
+            END CASE;
+
+            INSERT INTO supabase_functions.hooks
+              (hook_table_id, hook_name, request_id)
+            VALUES
+              (TG_RELID, TG_NAME, request_id);
+
+            RETURN NEW;
+          END
+        $$function$$;
+        -- Supabase super admin
+        DO
+        $$$$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_roles
+            WHERE rolname = 'supabase_functions_admin'
+          )
+          THEN
+            CREATE USER supabase_functions_admin NOINHERIT CREATEROLE LOGIN NOREPLICATION;
+          END IF;
+        END
+        $$$$;
+        GRANT ALL PRIVILEGES ON SCHEMA supabase_functions TO supabase_functions_admin;
+        GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA supabase_functions TO supabase_functions_admin;
+        GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA supabase_functions TO supabase_functions_admin;
+        ALTER USER supabase_functions_admin SET search_path = "supabase_functions";
+        ALTER table "supabase_functions".migrations OWNER TO supabase_functions_admin;
+        ALTER table "supabase_functions".hooks OWNER TO supabase_functions_admin;
+        ALTER function "supabase_functions".http_request() OWNER TO supabase_functions_admin;
+        GRANT supabase_functions_admin TO postgres;
+        -- Remove unused supabase_pg_net_admin role
+        DO
+        $$$$
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+            FROM pg_roles
+            WHERE rolname = 'supabase_pg_net_admin'
+          )
+          THEN
+            REASSIGN OWNED BY supabase_pg_net_admin TO supabase_admin;
+            DROP OWNED BY supabase_pg_net_admin;
+            DROP ROLE supabase_pg_net_admin;
+          END IF;
+        END
+        $$$$;
+        -- pg_net grants when extension is already enabled
+        DO
+        $$$$
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+            FROM pg_extension
+            WHERE extname = 'pg_net'
+          )
+          THEN
+            GRANT USAGE ON SCHEMA net TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+            ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
+            ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
+            ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
+            ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
+            REVOKE ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
+            REVOKE ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
+            GRANT EXECUTE ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+            GRANT EXECUTE ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+          END IF;
+        END
+        $$$$;
+        -- Event trigger for pg_net
+        CREATE OR REPLACE FUNCTION extensions.grant_pg_net_access()
+        RETURNS event_trigger
+        LANGUAGE plpgsql
+        AS $$$$
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+            FROM pg_event_trigger_ddl_commands() AS ev
+            JOIN pg_extension AS ext
+            ON ev.objid = ext.oid
+            WHERE ext.extname = 'pg_net'
+          )
+          THEN
+            GRANT USAGE ON SCHEMA net TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+            ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
+            ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SECURITY DEFINER;
+            ALTER function net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
+            ALTER function net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) SET search_path = net;
+            REVOKE ALL ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
+            REVOKE ALL ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) FROM PUBLIC;
+            GRANT EXECUTE ON FUNCTION net.http_get(url text, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+            GRANT EXECUTE ON FUNCTION net.http_post(url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer) TO supabase_functions_admin, postgres, anon, authenticated, service_role;
+          END IF;
+        END;
+        $$$$;
+        COMMENT ON FUNCTION extensions.grant_pg_net_access IS 'Grants access to pg_net';
+        DO
+        $$$$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1
+            FROM pg_event_trigger
+            WHERE evtname = 'issue_pg_net_access'
+          ) THEN
+            CREATE EVENT TRIGGER issue_pg_net_access ON ddl_command_end WHEN TAG IN ('CREATE EXTENSION')
+            EXECUTE PROCEDURE extensions.grant_pg_net_access();
+          END IF;
+        END
+        $$$$;
+        INSERT INTO supabase_functions.migrations (version) VALUES ('20210809183423_update_grants');
+        ALTER function supabase_functions.http_request() SECURITY DEFINER;
+        ALTER function supabase_functions.http_request() SET search_path = supabase_functions;
+        REVOKE ALL ON FUNCTION supabase_functions.http_request() FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION supabase_functions.http_request() TO postgres, anon, authenticated, service_role;
+      COMMIT;
+  db-roles:
+    content: |
+      -- NOTE: change to your own passwords for production environments
+      \set pgpass `echo "$$POSTGRES_PASSWORD"`
+
+      ALTER USER authenticator WITH PASSWORD :'pgpass';
+      ALTER USER pgbouncer WITH PASSWORD :'pgpass';
+      ALTER USER supabase_auth_admin WITH PASSWORD :'pgpass';
+      ALTER USER supabase_functions_admin WITH PASSWORD :'pgpass';
+      ALTER USER supabase_storage_admin WITH PASSWORD :'pgpass';
+  db-jwt:
+    content: |
+      \set jwt_secret `echo "$$JWT_SECRET"`
+      \set jwt_exp `echo "$$JWT_EXP"`
+
+      ALTER DATABASE postgres SET "app.settings.jwt_secret" TO :'jwt_secret';
+      ALTER DATABASE postgres SET "app.settings.jwt_exp" TO :'jwt_exp';
+  db-supabase:
+    content: |
+      \set pguser `echo "$$POSTGRES_USER"`
+
+      CREATE DATABASE _supabase WITH OWNER :pguser;
+  db-logs:
+    content: |
+      \set pguser `echo "$$POSTGRES_USER"`
+
+      \c _supabase
+      create schema if not exists _analytics;
+      alter schema _analytics owner to :pguser;
+      \c postgres
+  db-pooler:
+    content: |
+      \set pguser `echo "$$POSTGRES_USER"`
+
+      \c _supabase
+      create schema if not exists _supavisor;
+      alter schema _supavisor owner to :pguser;
+      \c postgres
+  gw-envoy:
+    content: |
+      dynamic_resources:
+        cds_config:
+          path_config_source:
+            path: /etc/envoy/cds.yaml
+          resource_api_version: V3
+        lds_config:
+          path_config_source:
+            path: /etc/envoy/lds.yaml
+          resource_api_version: V3
+
+      node:
+        cluster: supabase_cluster
+        id: supabase_node
+
+      overload_manager:
+        resource_monitors:
+          - name: envoy.resource_monitors.global_downstream_max_connections
+            typed_config:
+              '@type': >-
+                type.googleapis.com/envoy.extensions.resource_monitors.downstream_connections.v3.DownstreamConnectionsConfig
+              max_active_downstream_connections: 30000
+
+      admin:
+        address:
+          socket_address:
+            address: 127.0.0.1
+            port_value: 9901
+  gw-cds:
+    content: |
+      resources:
+        - '@type': type.googleapis.com/envoy.config.cluster.v3.Cluster
+          name: auth
+          connect_timeout: 5s
+          type: STRICT_DNS
+          dns_refresh_rate: 5s
+          dns_failure_refresh_rate:
+            base_interval: 1s
+            max_interval: 1s
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: auth
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: auth
+                          port_value: 9999
+          health_checks:
+            - timeout: 2s
+              interval: 5s
+              unhealthy_threshold: 3
+              healthy_threshold: 2
+              http_health_check:
+                path: /health
+          circuit_breakers:
+            thresholds:
+              - priority: DEFAULT
+                max_connections: 10000
+                max_pending_requests: 10000
+                max_requests: 10000
+
+        - '@type': type.googleapis.com/envoy.config.cluster.v3.Cluster
+          name: rest
+          connect_timeout: 5s
+          type: STRICT_DNS
+          dns_refresh_rate: 5s
+          dns_failure_refresh_rate:
+            base_interval: 1s
+            max_interval: 1s
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: rest
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: rest
+                          port_value: 3000
+          health_checks:
+            - timeout: 2s
+              interval: 5s
+              unhealthy_threshold: 3
+              healthy_threshold: 2
+              http_health_check:
+                path: /
+          circuit_breakers:
+            thresholds:
+              - priority: DEFAULT
+                max_connections: 10000
+                max_pending_requests: 10000
+                max_requests: 10000
+
+        - '@type': type.googleapis.com/envoy.config.cluster.v3.Cluster
+          name: realtime
+          connect_timeout: 5s
+          type: STRICT_DNS
+          dns_refresh_rate: 5s
+          dns_failure_refresh_rate:
+            base_interval: 1s
+            max_interval: 1s
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: realtime
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: realtime-dev.supabase-realtime
+                          port_value: 4000
+          health_checks:
+            - timeout: 2s
+              interval: 5s
+              unhealthy_threshold: 3
+              healthy_threshold: 2
+              http_health_check:
+                path: /
+          circuit_breakers:
+            thresholds:
+              - priority: DEFAULT
+                max_connections: 10000
+                max_pending_requests: 10000
+                max_requests: 10000
+
+        - '@type': type.googleapis.com/envoy.config.cluster.v3.Cluster
+          name: storage
+          connect_timeout: 5s
+          type: STRICT_DNS
+          dns_refresh_rate: 5s
+          dns_failure_refresh_rate:
+            base_interval: 1s
+            max_interval: 1s
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: storage
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: storage
+                          port_value: 5000
+          health_checks:
+            - timeout: 2s
+              interval: 5s
+              unhealthy_threshold: 3
+              healthy_threshold: 2
+              http_health_check:
+                path: /status
+          circuit_breakers:
+            thresholds:
+              - priority: DEFAULT
+                max_connections: 10000
+                max_pending_requests: 10000
+                max_requests: 10000
+
+        - '@type': type.googleapis.com/envoy.config.cluster.v3.Cluster
+          name: functions
+          connect_timeout: 5s
+          type: STRICT_DNS
+          dns_refresh_rate: 5s
+          dns_failure_refresh_rate:
+            base_interval: 1s
+            max_interval: 1s
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: functions
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: functions
+                          port_value: 9000
+          health_checks:
+            - timeout: 2s
+              interval: 5s
+              unhealthy_threshold: 3
+              healthy_threshold: 2
+              tcp_health_check: {}
+          circuit_breakers:
+            thresholds:
+              - priority: DEFAULT
+                max_connections: 10000
+                max_pending_requests: 10000
+                max_requests: 10000
+
+        - '@type': type.googleapis.com/envoy.config.cluster.v3.Cluster
+          name: meta
+          connect_timeout: 5s
+          type: STRICT_DNS
+          dns_refresh_rate: 5s
+          dns_failure_refresh_rate:
+            base_interval: 1s
+            max_interval: 1s
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: meta
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: meta
+                          port_value: 8080
+          health_checks:
+            - timeout: 2s
+              interval: 5s
+              unhealthy_threshold: 3
+              healthy_threshold: 2
+              http_health_check:
+                path: /health
+          circuit_breakers:
+            thresholds:
+              - priority: DEFAULT
+                max_connections: 10000
+                max_pending_requests: 10000
+                max_requests: 10000
+
+        - '@type': type.googleapis.com/envoy.config.cluster.v3.Cluster
+          name: studio
+          connect_timeout: 5s
+          type: STRICT_DNS
+          dns_refresh_rate: 5s
+          dns_failure_refresh_rate:
+            base_interval: 1s
+            max_interval: 1s
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: studio
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: studio
+                          port_value: 3000
+          health_checks:
+            - timeout: 2s
+              interval: 5s
+              unhealthy_threshold: 3
+              healthy_threshold: 2
+              http_health_check:
+                path: /project/default
+          circuit_breakers:
+            thresholds:
+              - priority: DEFAULT
+                max_connections: 10000
+                max_pending_requests: 10000
+                max_requests: 10000
+  gw-lds:
+    content: |
+      resources:
+        - '@type': type.googleapis.com/envoy.config.listener.v3.Listener
+          name: supabase
+          per_connection_buffer_limit_bytes: 32768  # 32 KiB
+
+          address:
+            socket_address:
+              address: 0.0.0.0
+              port_value: 8000
+
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    '@type': >-
+                      type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: ingress_http
+                    normalize_path: true
+                    merge_slashes: true
+                    path_with_escaped_slashes_action: REJECT_REQUEST
+                    use_remote_address: true
+                    common_http_protocol_options:
+                      headers_with_underscores_action: REJECT_REQUEST
+                    upgrade_configs:
+                      - upgrade_type: websocket
+                    access_log:
+                      - name: envoy.access_loggers.stdout
+                        typed_config:
+                          '@type': >-
+                            type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                          log_format:
+                            text_format_source:
+                              inline_string: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT% - - [%START_TIME(%d/%b/%Y:%H:%M:%S %z)%] \"%REQ(:METHOD)% %REQ(X-ENVOY-ORIGINAL-PATH?:PATH)% %PROTOCOL%\" %RESPONSE_CODE% %BYTES_SENT% \"%REQ(REFERER)%\" \"%REQ(USER-AGENT)%\"\n"
+
+                    route_config:
+                      name: supabase_route
+                      virtual_hosts:
+                        - name: supabase_host
+                          domains:
+                            - '*'
+                          cors:
+                            allow_origin_string_match:
+                              - safe_regex:
+                                  regex: ".*"
+                            allow_methods: "GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD,CONNECT,TRACE"
+                            allow_headers: "*"
+                            expose_headers: "*"
+                            max_age: "3600"
+                          request_headers_to_add:
+                            - header:
+                                key: X-Forwarded-Host
+                                value: "%REQ(:AUTHORITY)%"
+                              append_action: ADD_IF_ABSENT
+                            - header:
+                                key: X-Forwarded-Port
+                                value: "%DOWNSTREAM_LOCAL_PORT%"
+                              append_action: ADD_IF_ABSENT
+                          routes:
+                            - match:
+                                prefix: /auth/v1/verify
+                              route:
+                                cluster: auth
+                                prefix_rewrite: /verify
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /auth/v1/verify
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: ALLOW
+                                      policies:
+                                        allow_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+
+                            - match:
+                                prefix: /auth/v1/callback
+                              route:
+                                cluster: auth
+                                prefix_rewrite: /callback
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /auth/v1/callback
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: ALLOW
+                                      policies:
+                                        allow_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+
+                            - match:
+                                prefix: /auth/v1/authorize
+                              route:
+                                cluster: auth
+                                prefix_rewrite: /authorize
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /auth/v1/authorize
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: ALLOW
+                                      policies:
+                                        allow_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+
+                            - match:
+                                prefix: /auth/v1/.well-known/jwks.json
+                              route:
+                                cluster: auth
+                                prefix_rewrite: /.well-known/jwks.json
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /auth/v1/.well-known/jwks.json
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: ALLOW
+                                      policies:
+                                        allow_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+
+                            - match:
+                                prefix: /.well-known/oauth-authorization-server
+                              route:
+                                cluster: auth
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /.well-known/oauth-authorization-server
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: ALLOW
+                                      policies:
+                                        allow_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+
+                            - match:
+                                prefix: /auth/v1/sso/saml/acs
+                              route:
+                                cluster: auth
+                                prefix_rewrite: /sso/saml/acs
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /auth/v1/sso/saml/acs
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: ALLOW
+                                      policies:
+                                        allow_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+
+                            - match:
+                                prefix: /auth/v1/sso/saml/metadata
+                              route:
+                                cluster: auth
+                                prefix_rewrite: /sso/saml/metadata
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /auth/v1/sso/saml/metadata
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: ALLOW
+                                      policies:
+                                        allow_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+
+                            - name: functions-v1-all
+                              match:
+                                prefix: /functions/v1/
+                              route:
+                                cluster: functions
+                                prefix_rewrite: /
+                                timeout: 150s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /functions/v1/
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: ALLOW
+                                      policies:
+                                        allow_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+
+                            - match:
+                                prefix: /storage/v1/
+                              route:
+                                cluster: storage
+                                prefix_rewrite: /
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /storage/v1
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: ALLOW
+                                      policies:
+                                        allow_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+
+                            - name: auth-v1-protected
+                              match:
+                                prefix: /auth/v1/
+                              route:
+                                cluster: auth
+                                prefix_rewrite: /
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /auth/v1/
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+
+                            - name: rest-v1-openapi-protected
+                              match:
+                                path: /rest/v1/
+                              route:
+                                cluster: rest
+                                prefix_rewrite: /
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /rest/v1/
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: ALLOW
+                                      policies:
+                                        admin:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - header:
+                                                name: apikey
+                                                string_match:
+                                                  exact: '$${SERVICE_ROLE_KEY}'
+                                            - header:
+                                                name: apikey
+                                                string_match:
+                                                  exact: '$${SERVICE_ROLE_KEY_ASYMMETRIC}'
+
+                            - name: rest-v1-protected
+                              match:
+                                prefix: /rest/v1/
+                              route:
+                                cluster: rest
+                                prefix_rewrite: /
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /rest/v1/
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+
+                            - name: graphql-v1-protected
+                              match:
+                                prefix: /graphql/v1
+                              route:
+                                cluster: rest
+                                prefix_rewrite: /rpc/graphql
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /graphql/v1
+                                  append_action: ADD_IF_ABSENT
+                                - header:
+                                    key: Content-Profile
+                                    value: graphql_public
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+
+                            - name: realtime-v1-api-openapi-blocked
+                              match:
+                                prefix: /realtime/v1/api/openapi
+                              route:
+                                cluster: realtime
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /realtime/v1/api/openapi
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: DENY
+                                      policies:
+                                        deny_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+
+                            - name: realtime-v1-api-tenants-blocked
+                              match:
+                                prefix: /realtime/v1/api/tenants
+                              route:
+                                cluster: realtime
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /realtime/v1/api/tenants
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: DENY
+                                      policies:
+                                        deny_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+
+                            - name: realtime-v1-api-protected
+                              match:
+                                prefix: /realtime/v1/api
+                              route:
+                                cluster: realtime
+                                prefix_rewrite: /api
+                                timeout: 30s
+                                host_rewrite_literal: realtime-dev.supabase-realtime
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /realtime/v1/api
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+
+                            - name: realtime-v1-ws-protected
+                              match:
+                                prefix: /realtime/v1/
+                              route:
+                                cluster: realtime
+                                prefix_rewrite: /socket/
+                                timeout: 30s
+                                host_rewrite_literal: realtime-dev.supabase-realtime
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /realtime/v1/
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+
+                            - name: pg-protected
+                              match:
+                                prefix: /pg/
+                              route:
+                                cluster: meta
+                                prefix_rewrite: /
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /pg/
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.cors:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.cors.v3.CorsPolicy
+                                  allow_origin_string_match:
+                                    - exact: '$${SUPABASE_PUBLIC_URL}'
+                                    - safe_regex:
+                                        regex: 'https?://(localhost|127\.0\.0\.1)(:[0-9]+)?'
+                                  allow_methods: "GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD"
+                                  allow_headers: "*"
+                                  expose_headers: "*"
+                                  max_age: "3600"
+
+                            - match:
+                                prefix: /api/mcp
+                              route:
+                                cluster: studio
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /api/mcp
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: DENY
+                                      policies:
+                                        deny_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+
+                            - match:
+                                prefix: /mcp
+                              route:
+                                cluster: studio
+                                prefix_rewrite: /api/mcp
+                                timeout: 30s
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /mcp
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.basic_auth:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                  disabled: true
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  # Block access to /mcp by default
+                                  rbac:
+                                    rules:
+                                      action: DENY
+                                      policies:
+                                        deny_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+                                  # Enable local access (danger zone!)
+                                  # 1. Comment out the 'rbac' block above.
+                                  # 2. Uncomment and adjust the 'rbac' block below.
+                                  # 3. Add or adjust your local IPs in 'principals'.
+                                  #rbac:
+                                  #  rules:
+                                  #    action: ALLOW
+                                  #    policies:
+                                  #      allow_local:
+                                  #        permissions:
+                                  #          - any: true
+                                  #        principals:
+                                  #          - direct_remote_ip:
+                                  #              address_prefix: 127.0.0.1
+                                  #              prefix_len: 32
+                                  #          - direct_remote_ip:
+                                  #              address_prefix: ::1
+                                  #              prefix_len: 128
+
+                            - match:
+                                prefix: /
+                              route:
+                                cluster: studio
+                                timeout: 30s
+                              request_headers_to_remove:
+                                - authorization
+                              request_headers_to_add:
+                                - header:
+                                    key: X-Forwarded-Prefix
+                                    value: /
+                                  append_action: ADD_IF_ABSENT
+                              typed_per_filter_config:
+                                envoy.filters.http.rbac:
+                                  '@type': >-
+                                    type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                  rbac:
+                                    rules:
+                                      action: ALLOW
+                                      policies:
+                                        allow_all:
+                                          permissions:
+                                            - any: true
+                                          principals:
+                                            - any: true
+
+                    http_filters:
+                      - name: envoy.filters.http.cors
+                        typed_config:
+                          '@type': >-
+                            type.googleapis.com/envoy.extensions.filters.http.cors.v3.Cors
+
+                      - name: envoy.filters.http.basic_auth
+                        typed_config:
+                          '@type': >-
+                            type.googleapis.com/envoy.extensions.filters.http.basic_auth.v3.BasicAuth
+                          users:
+                            inline_string: '$${DASHBOARD_BASIC_AUTH}'
+
+                      # Copies ?apikey=... from the URL into the apikey header when clients omit the header.
+                      - name: envoy.filters.http.lua
+                        typed_config:
+                          '@type': >-
+                            type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                          inline_code: |
+                            local FUNCTIONS_ROUTE = "functions-v1-all"
+                            local FUNCTIONS_PREFIX = "/functions/v1/"
+
+                            local function is_functions_request(request_handle, headers)
+                              if request_handle:streamInfo():routeName() == FUNCTIONS_ROUTE then
+                                return true
+                              end
+
+                              local path = headers:get(":path")
+                              if path == nil then
+                                return false
+                              end
+
+                              return string.sub(path, 1, string.len(FUNCTIONS_PREFIX)) == FUNCTIONS_PREFIX
+                            end
+
+                            function envoy_on_request(request_handle)
+                              local headers = request_handle:headers()
+                              if is_functions_request(request_handle, headers) then
+                                return
+                              end
+
+                              if headers:get("apikey") ~= nil then
+                                return
+                              end
+
+                              local path = headers:get(":path")
+                              local query_start = string.find(path, "?", 1, true)
+                              if query_start == nil then
+                                return
+                              end
+
+                              local query = string.sub(path, query_start + 1)
+                              for key, value in string.gmatch(query, "([^&]+)=([^&]*)") do
+                                if key == "apikey" and value ~= "" then
+                                  headers:add("apikey", value)
+                                  return
+                                end
+                              end
+                            end
+
+                      # Returns 401 for missing/invalid API keys on protected API routes.
+                      - name: envoy.filters.http.lua
+                        typed_config:
+                          '@type': >-
+                            type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                          inline_code: |
+                            local ANON_KEY = "$${ANON_KEY}"
+                            local SERVICE_ROLE_KEY = "$${SERVICE_ROLE_KEY}"
+                            local SUPABASE_PUBLISHABLE_KEY = "$${SUPABASE_PUBLISHABLE_KEY}"
+                            local SUPABASE_SECRET_KEY = "$${SUPABASE_SECRET_KEY}"
+                            local ANON_KEY_ASYMMETRIC = "$${ANON_KEY_ASYMMETRIC}"
+                            local SERVICE_ROLE_KEY_ASYMMETRIC = "$${SERVICE_ROLE_KEY_ASYMMETRIC}"
+                            local TRANSLATION_ENABLED = SUPABASE_SECRET_KEY ~= "" and SUPABASE_PUBLISHABLE_KEY ~= "" and SERVICE_ROLE_KEY_ASYMMETRIC ~= "" and ANON_KEY_ASYMMETRIC ~= ""
+
+                            local PROTECTED_ROUTES = {
+                              ["auth-v1-protected"] = true,
+                              ["rest-v1-openapi-protected"] = true,
+                              ["rest-v1-protected"] = true,
+                              ["graphql-v1-protected"] = true,
+                              ["realtime-v1-api-protected"] = true,
+                              ["realtime-v1-ws-protected"] = true,
+                              ["pg-protected"] = true,
+                            }
+
+                            local function is_protected_route(route_name)
+                              if route_name == nil or route_name == "" then
+                                return false
+                              end
+
+                              return PROTECTED_ROUTES[route_name] == true
+                            end
+
+                            local function is_valid_apikey(apikey)
+                              if apikey == nil or apikey == "" then
+                                return false
+                              end
+
+                              if SERVICE_ROLE_KEY ~= "" and apikey == SERVICE_ROLE_KEY then
+                                return true
+                              end
+
+                              if ANON_KEY ~= "" and apikey == ANON_KEY then
+                                return true
+                              end
+
+                              if TRANSLATION_ENABLED and apikey == SUPABASE_SECRET_KEY then
+                                return true
+                              end
+
+                              if TRANSLATION_ENABLED and apikey == SUPABASE_PUBLISHABLE_KEY then
+                                return true
+                              end
+
+                              return false
+                            end
+
+                            function envoy_on_request(request_handle)
+                              local headers = request_handle:headers()
+                              local route_name = request_handle:streamInfo():routeName()
+                              if not is_protected_route(route_name) then
+                                return
+                              end
+
+                              if is_valid_apikey(headers:get("apikey")) then
+                                return
+                              end
+
+                              request_handle:respond({
+                                [":status"] = "401",
+                                ["content-type"] = "text/plain",
+                              }, "Unauthorized")
+                            end
+
+                      # Translates the query parameter apikey into the matching internal JWT and rewrites the URL so only JWTs propagate downstream.
+                      - name: envoy.filters.http.lua
+                        typed_config:
+                          '@type': >-
+                            type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                          inline_code: |
+                            local FUNCTIONS_ROUTE = "functions-v1-all"
+                            local FUNCTIONS_PREFIX = "/functions/v1/"
+                            local SECRET_KEY = "$${SUPABASE_SECRET_KEY}"
+                            local PUBLISHABLE_KEY = "$${SUPABASE_PUBLISHABLE_KEY}"
+                            local SERVICE_ROLE_JWT = "$${SERVICE_ROLE_KEY_ASYMMETRIC}"
+                            local ANON_JWT = "$${ANON_KEY_ASYMMETRIC}"
+                            local TRANSLATION_ENABLED = SECRET_KEY ~= "" and PUBLISHABLE_KEY ~= "" and SERVICE_ROLE_JWT ~= "" and ANON_JWT ~= ""
+
+                            local function is_functions_request(request_handle, headers)
+                              if request_handle:streamInfo():routeName() == FUNCTIONS_ROUTE then
+                                return true
+                              end
+
+                              local path = headers:get(":path")
+                              if path == nil then
+                                return false
+                              end
+
+                              return string.sub(path, 1, string.len(FUNCTIONS_PREFIX)) == FUNCTIONS_PREFIX
+                            end
+
+                            local function translate_apikey(apikey)
+                              if apikey == nil or apikey == "" then
+                                return nil
+                              end
+
+                              if not TRANSLATION_ENABLED then
+                                return nil
+                              end
+
+                              if apikey == SECRET_KEY then
+                                return SERVICE_ROLE_JWT
+                              end
+
+                              if apikey == PUBLISHABLE_KEY then
+                                return ANON_JWT
+                              end
+
+                              return nil
+                            end
+
+                            local function extract_query_apikey(path)
+                              if path == nil or path == "" then
+                                return nil
+                              end
+
+                              local query_start = string.find(path, "?", 1, true)
+                              if query_start == nil then
+                                return nil
+                              end
+
+                              local query = string.sub(path, query_start + 1)
+                              for key, value in string.gmatch(query, "([^&]+)=([^&]*)") do
+                                if key == "apikey" and value ~= "" then
+                                  return value
+                                end
+                              end
+
+                              return nil
+                            end
+
+                            local function replace_query_apikey(path, new_value)
+                              if path == nil or path == "" or new_value == nil or new_value == "" then
+                                return nil
+                              end
+
+                              local query_start = string.find(path, "?", 1, true)
+                              if query_start == nil then
+                                return nil
+                              end
+
+                              local base = string.sub(path, 1, query_start)
+                              local query = string.sub(path, query_start + 1)
+                              local updated = {}
+                              local replaced = false
+
+                              for part in string.gmatch(query, "([^&]+)") do
+                                local key, value = string.match(part, "([^=]+)=(.*)")
+                                if key == "apikey" then
+                                  part = key .. "=" .. new_value
+                                  replaced = true
+                                end
+                                table.insert(updated, part)
+                              end
+
+                              if not replaced then
+                                return nil
+                              end
+
+                              return base .. table.concat(updated, "&")
+                            end
+
+                            function envoy_on_request(request_handle)
+                              local headers = request_handle:headers()
+                              if is_functions_request(request_handle, headers) then
+                                return
+                              end
+
+                              local path = headers:get(":path")
+                              local apikey = extract_query_apikey(path)
+                              local translated = translate_apikey(apikey)
+
+                              if translated == nil then
+                                return
+                              end
+
+                              headers:replace("apikey", translated)
+
+                              local rewritten_path = replace_query_apikey(path, translated)
+                              if rewritten_path ~= nil then
+                                headers:replace(":path", rewritten_path)
+                              end
+                            end
+
+                      # Translates an apikey header into the appropriate internal JWT for downstream RBAC checks.
+                      - name: envoy.filters.http.lua
+                        typed_config:
+                          '@type': >-
+                            type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                          inline_code: |
+                            local FUNCTIONS_ROUTE = "functions-v1-all"
+                            local FUNCTIONS_PREFIX = "/functions/v1/"
+                            local SECRET_KEY = "$${SUPABASE_SECRET_KEY}"
+                            local PUBLISHABLE_KEY = "$${SUPABASE_PUBLISHABLE_KEY}"
+                            local SERVICE_ROLE_JWT = "$${SERVICE_ROLE_KEY_ASYMMETRIC}"
+                            local ANON_JWT = "$${ANON_KEY_ASYMMETRIC}"
+                            local TRANSLATION_ENABLED = SECRET_KEY ~= "" and PUBLISHABLE_KEY ~= "" and SERVICE_ROLE_JWT ~= "" and ANON_JWT ~= ""
+
+                            local function is_functions_request(request_handle, headers)
+                              if request_handle:streamInfo():routeName() == FUNCTIONS_ROUTE then
+                                return true
+                              end
+
+                              local path = headers:get(":path")
+                              if path == nil then
+                                return false
+                              end
+
+                              return string.sub(path, 1, string.len(FUNCTIONS_PREFIX)) == FUNCTIONS_PREFIX
+                            end
+
+                            local function translate_apikey(apikey)
+                              if apikey == nil or apikey == "" then
+                                return nil
+                              end
+
+                              if not TRANSLATION_ENABLED then
+                                return nil
+                              end
+
+                              if apikey == SECRET_KEY then
+                                return SERVICE_ROLE_JWT
+                              end
+
+                              if apikey == PUBLISHABLE_KEY then
+                                return ANON_JWT
+                              end
+
+                              return nil
+                            end
+
+                            function envoy_on_request(request_handle)
+                              local headers = request_handle:headers()
+                              if is_functions_request(request_handle, headers) then
+                                return
+                              end
+
+                              local translated = translate_apikey(headers:get("apikey"))
+                              if translated ~= nil and translated ~= "" then
+                                headers:replace("apikey", translated)
+                              end
+                            end
+
+                      # Mirrors apikey into x-api-key for realtime WS compatibility.
+                      - name: envoy.filters.http.lua
+                        typed_config:
+                          '@type': >-
+                            type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                          inline_code: |
+                            local REALTIME_WS_ROUTE = "realtime-v1-ws-protected"
+
+                            function envoy_on_request(request_handle)
+                              local route_name = request_handle:streamInfo():routeName()
+                              if route_name ~= REALTIME_WS_ROUTE then
+                                return
+                              end
+
+                              local headers = request_handle:headers()
+                              local apikey = headers:get("apikey")
+                              if apikey == nil or apikey == "" then
+                                return
+                              end
+
+                              headers:replace("x-api-key", apikey)
+                            end
+
+                      # Synthesizes an Authorization header (Bearer …) from apikey when callers don’t provide a real JWT header.
+                      - name: envoy.filters.http.lua
+                        typed_config:
+                          '@type': >-
+                            type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                          inline_code: |
+                            local FUNCTIONS_ROUTE = "functions-v1-all"
+                            local FUNCTIONS_PREFIX = "/functions/v1/"
+                            local REALTIME_WS_ROUTE = "realtime-v1-ws-protected"
+
+                            local function is_functions_request(request_handle, headers)
+                              if request_handle:streamInfo():routeName() == FUNCTIONS_ROUTE then
+                                return true
+                              end
+
+                              local path = headers:get(":path")
+                              if path == nil then
+                                return false
+                              end
+
+                              return string.sub(path, 1, string.len(FUNCTIONS_PREFIX)) == FUNCTIONS_PREFIX
+                            end
+
+                            local function has_real_jwt(auth_header)
+                              if auth_header == nil or auth_header == "" then
+                                return false
+                              end
+
+                              if string.sub(auth_header, 1, 7) ~= "Bearer " then
+                                return false
+                              end
+
+                              return string.sub(auth_header, 1, 10) ~= "Bearer sb_"
+                            end
+
+                            local function format_authorization(value)
+                              if value == nil or value == "" then
+                                return nil
+                              end
+
+                              if string.sub(value, 1, 7) == "Bearer " then
+                                return value
+                              end
+
+                              return "Bearer " .. value
+                            end
+
+                            function envoy_on_request(request_handle)
+                              local headers = request_handle:headers()
+                              if request_handle:streamInfo():routeName() == REALTIME_WS_ROUTE then
+                                return
+                              end
+
+                              if is_functions_request(request_handle, headers) then
+                                return
+                              end
+
+                              if has_real_jwt(headers:get("authorization")) then
+                                return
+                              end
+
+                              local apikey = headers:get("apikey")
+                              local authorization_value = format_authorization(apikey)
+                              if authorization_value ~= nil then
+                                headers:replace("authorization", authorization_value)
+                              end
+                            end
+
+                      - name: envoy.filters.http.rbac
+                        typed_config:
+                          '@type': >-
+                            type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+                          rules:
+                            action: ALLOW
+                            policies:
+                              admin:
+                                permissions:
+                                  - url_path:
+                                      path:
+                                        prefix: /pg/
+                                principals:
+                                  - header:
+                                      name: apikey
+                                      string_match:
+                                        exact: '$${SERVICE_ROLE_KEY}'
+                                  - header:
+                                      name: apikey
+                                      string_match:
+                                        exact: '$${SERVICE_ROLE_KEY_ASYMMETRIC}'
+                              apikey:
+                                permissions:
+                                  - url_path:
+                                      path:
+                                        prefix: /auth/v1/
+                                  - url_path:
+                                      path:
+                                        prefix: /rest/v1/
+                                  - url_path:
+                                      path:
+                                        prefix: /realtime/v1/api
+                                  - url_path:
+                                      path:
+                                        prefix: /realtime/v1/
+                                  - url_path:
+                                      path:
+                                        prefix: /graphql/v1
+                                principals:
+                                  - header:
+                                      name: apikey
+                                      string_match:
+                                        exact: '$${SERVICE_ROLE_KEY}'
+                                  - header:
+                                      name: apikey
+                                      string_match:
+                                        exact: '$${ANON_KEY}'
+                                  - header:
+                                      name: apikey
+                                      string_match:
+                                        exact: '$${SERVICE_ROLE_KEY_ASYMMETRIC}'
+                                  - header:
+                                      name: apikey
+                                      string_match:
+                                        exact: '$${ANON_KEY_ASYMMETRIC}'
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          '@type': >-
+                            type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  gw-entrada-oficial:
+    content: |
+      #!/bin/sh
+      set -e
+
+      # Generate SHA1 base64 hash for Envoy basic auth user list
+      PASSWORD_HASH=$$(printf '%s' "$${DASHBOARD_PASSWORD}" | openssl sha1 -binary | openssl base64)
+      DASHBOARD_BASIC_AUTH="$${DASHBOARD_USERNAME}:{SHA}$${PASSWORD_HASH}"
+
+      echo "Generating Envoy configuration..."
+
+      # Process the lds.yaml template with environment variables using sed
+      # Using | as delimiter since JWT tokens contain /
+      sed -e "s|\$${ANON_KEY}|$${ANON_KEY}|g" \
+          -e "s|\$${ANON_KEY_ASYMMETRIC}|$${ANON_KEY_ASYMMETRIC}|g" \
+          -e "s|\$${SERVICE_ROLE_KEY}|$${SERVICE_ROLE_KEY}|g" \
+          -e "s|\$${SERVICE_ROLE_KEY_ASYMMETRIC}|$${SERVICE_ROLE_KEY_ASYMMETRIC}|g" \
+          -e "s|\$${SUPABASE_PUBLISHABLE_KEY}|$${SUPABASE_PUBLISHABLE_KEY}|g" \
+          -e "s|\$${SUPABASE_SECRET_KEY}|$${SUPABASE_SECRET_KEY}|g" \
+          -e "s|\$${SUPABASE_PUBLIC_URL}|$${SUPABASE_PUBLIC_URL}|g" \
+          -e "s|\$${DASHBOARD_BASIC_AUTH}|$${DASHBOARD_BASIC_AUTH}|g" \
+          /etc/envoy/lds.template.yaml > /etc/envoy/lds.yaml
+
+      if [ -n "$$SUPABASE_SECRET_KEY" ] && \
+         [ -n "$$SUPABASE_PUBLISHABLE_KEY" ] && \
+         [ -n "$$SERVICE_ROLE_KEY_ASYMMETRIC" ] && \
+         [ -n "$$ANON_KEY_ASYMMETRIC" ]; then
+        echo "Envoy sb_ key translation enabled"
+      else
+        echo "Envoy running in legacy API key mode (sb_ keys disabled)"
+      fi
+
+      echo "Envoy configuration generated successfully"
+      echo "Starting Envoy..."
+
+      # Start Envoy
+      exec envoy -c /etc/envoy/envoy.yaml "$$@"
+  gw-entrada:
+    content: |
+      #!/bin/sh
+      # Entrada do serviço `api-gw` (Envoy) do docker-compose.dokploy.yml.
+      #
+      # O `cds.yaml` oficial do Supabase aponta cada rota para o NOME do serviço
+      # (`auth`, `rest`, `storage`, `realtime-dev.supabase-realtime`…). No Dokploy o
+      # gateway também está na rede compartilhada do Traefik (`dokploy-network`), e lá
+      # `auth` ou `rest` podem ser o contêiner de OUTRO sistema: o Envoy mandaria
+      # senha e token de login para quem ganhasse a resolução de nome.
+      #
+      # Por isso cada serviço interno tem um apelido único (`imobcrm-*`, só na rede
+      # privada do compose), e aqui o `cds.yaml` é reescrito para esses apelidos na
+      # partida. O arquivo vendorizado (infra/dokploy/supabase/) fica intacto: ele é
+      # montado em CDS_ORIGEM e a cópia reescrita vai para CDS_DESTINO, que é o
+      # caminho que o envoy.yaml oficial lê.
+      #
+      # Falha FECHADA: se sobrar algum endereço fora de `imobcrm-*` (o formato do
+      # arquivo mudou numa troca de versão do Supabase, por exemplo), o gateway não
+      # sobe — melhor um erro visível no log do Dokploy do que tráfego para o vizinho.
+      #
+      # Os caminhos são injetáveis só para o teste (tests/shell/dokploy-compose.test.sh).
+      set -eu
+
+      CDS_ORIGEM="$${CDS_ORIGEM:-/etc/envoy/cds.src.yaml}"
+      CDS_DESTINO="$${CDS_DESTINO:-/etc/envoy/cds.yaml}"
+      ENTRADA_OFICIAL="$${ENTRADA_OFICIAL:-/docker-entrypoint.sh}"
+      PREFIXO="$${ALIAS_PREFIXO:-imobcrm-}"
+
+      sed -E \
+        -e "s/^([[:space:]]+address:[[:space:]]+)(auth|rest|storage|functions|meta|studio)[[:space:]]*\$$/\\1$${PREFIXO}\\2/" \
+        -e "s/^([[:space:]]+address:[[:space:]]+)realtime-dev\\.supabase-realtime[[:space:]]*\$$/\\1$${PREFIXO}realtime/" \
+        "$$CDS_ORIGEM" > "$$CDS_DESTINO"
+
+      sobras="$$(grep -E '^[[:space:]]+address:[[:space:]]' "$$CDS_DESTINO" | grep -v "address: $${PREFIXO}" || true)"
+      if [ -n "$$sobras" ]; then
+        echo "api-gw: endereço sem apelido único no cds.yaml — recuso subir:" >&2
+        printf '%s\n' "$$sobras" >&2
+        exit 1
+      fi
+      echo "api-gw: cds.yaml reescrito para os apelidos $${PREFIXO}*"
+
+      exec /bin/sh "$$ENTRADA_OFICIAL" "$$@"
+  setup-script:
+    content: |
+      #!/bin/sh
+      # Serviço `setup` do docker-compose.dokploy.yml. Roda a cada deploy, ANTES do
+      # app, dentro de um contêiner postgres:17.6-alpine3.22 (psql + wget do busybox).
+      #
+      # Faz o que o hostgator-setup-kit/install.sh faz na instalação, na mesma ordem
+      # e com as mesmas regras:
+      #   1. extensões vector, citext e pg_trgm no schema public;
+      #   2. baseline.sql: banco NOVO com ON_ERROR_STOP (schema incompleto = sem RLS,
+      #      então falha alto); banco EXISTENTE reaplicado em modo update, porque o
+      #      baseline é idempotente e auto-curativo — é como as atualizações chegam;
+      #   3. chave de cifra dos segredos em private.app_secrets (ensure_encryption_key);
+      #   4. primeiro dono: criado no Auth (GoTrue) e promovido a admin da primeira
+      #      organização e a super-admin da plataforma, com mfa_required=false
+      #      explícito (o mesmo INSERT do install.sh, e o porquê está lá).
+      #
+      # Idempotente: rodar de novo não duplica nada nem troca a senha do dono.
+      set -eu
+
+      : "$${DB_URL:?DB_URL ausente}"
+      : "$${AUTH_URL:?AUTH_URL ausente}"
+      : "$${SERVICE_ROLE_KEY:?SERVICE_ROLE_KEY ausente}"
+      : "$${OWNER_EMAIL:?OWNER_EMAIL ausente}"
+      # OWNER_PASSWORD só é exigida enquanto o dono não existe (conferido abaixo):
+      # depois da instalação ela pode sair do Environment do Dokploy.
+      OWNER_PASSWORD="$${OWNER_PASSWORD:-}"
+      : "$${NUVEMSHOP_OAUTH_ENCRYPTION_KEY:?NUVEMSHOP_OAUTH_ENCRYPTION_KEY ausente}"
+      LOCALE="$${APP_LOCALE:-pt-BR}"
+      # De onde vem o baseline.sql. O app, o worker e o scheduler rodam a imagem da
+      # versão IMAGE_TAG; o arquivo montado do clone é o da PONTA da branch que o
+      # Dokploy puxou — que pode estar à frente (ou atrás) da imagem. Schema de uma
+      # versão com código de outra é o defeito que não aparece no deploy e aparece
+      # na tela. Por isso o padrão é baixar o baseline da TAG v$${IMAGE_TAG}:
+      #   BASELINE_FONTE=versao (padrão) → baixa o da tag; se não conseguir, FALHA.
+      #   BASELINE_FONTE=clone           → usa o arquivo montado (desenvolvimento e
+      #                                    teste; nunca numa instalação de cliente).
+      BASELINE_FONTE="$${BASELINE_FONTE:-versao}"
+      BASELINE_REPO="$${BASELINE_REPO:-renoribeiro/DeskcommCRM-re9}"
+      # Avisos de "já existe" viram ruído no log do Dokploy; erro de verdade continua aparecendo.
+      export PGOPTIONS="$${PGOPTIONS:-} -c client_min_messages=warning"
+
+      log() { printf '[setup] %s\n' "$$*"; }
+      q() { psql "$$DB_URL" -v ON_ERROR_STOP=1 -tAq "$$@"; }
+
+      # O log da aplicação do baseline e o arquivo baixado moram num diretório do
+      # próprio processo (não em /tmp/baseline.log fixo).
+      TRABALHO="$$(mktemp -d)"
+      trap 'rm -rf "$$TRABALHO"' EXIT
+      BASELINE_LOG="$$TRABALHO/baseline.log"
+
+      case "$$BASELINE_FONTE" in
+        clone)
+          BASELINE="$${BASELINE:-/baseline.sql}"
+          log "BASELINE_FONTE=clone: usando o baseline do clone ($$BASELINE), não o da versão $${IMAGE_TAG:-?} — só para desenvolvimento e teste"
+          ;;
+        versao)
+          : "$${IMAGE_TAG:?IMAGE_TAG ausente: o setup aplica o baseline da mesma versão das imagens}"
+          url="https://raw.githubusercontent.com/$${BASELINE_REPO}/v$${IMAGE_TAG}/supabase/baseline.sql"
+          BASELINE="$$TRABALHO/baseline.sql"
+          log "baixando o schema da versão $${IMAGE_TAG}: $$url"
+          if ! wget -q -T 60 -O "$$BASELINE" "$$url" 2>"$$TRABALHO/wget.err"; then
+            log "NÃO consegui baixar o schema da versão $${IMAGE_TAG} ($$(tail -1 "$$TRABALHO/wget.err" 2>/dev/null))."
+            log "confira se a tag v$${IMAGE_TAG} existe em https://github.com/$${BASELINE_REPO}/tags e se a VPS alcança raw.githubusercontent.com; depois faça Deploy de novo."
+            log "o setup NÃO aplica o schema de outra versão no lugar: app e banco ficariam divergentes."
+            exit 1
+          fi
+          tamanho="$$(wc -c < "$$BASELINE" | tr -d ' ')"
+          if [ "$${tamanho:-0}" -lt "$${BASELINE_TAMANHO_MINIMO:-1000000}" ] || ! grep -qi 'create table' "$$BASELINE"; then
+            log "o schema baixado da versão $${IMAGE_TAG} não parece um baseline ($${tamanho:-0} bytes, sem 'create table') — recusado."
+            exit 1
+          fi
+          ;;
+        *)
+          log "BASELINE_FONTE='$$BASELINE_FONTE' não existe: use 'versao' (padrão) ou 'clone'"
+          exit 1
+          ;;
+      esac
+
+      log "aguardando o banco…"
+      i=0
+      until pg_isready -d "$$DB_URL" >/dev/null 2>&1; do
+        i=$$((i + 1)); [ "$$i" -le 90 ] || { log "banco não respondeu em 3 min"; exit 1; }
+        sleep 2
+      done
+
+      log "aguardando o Auth…"
+      i=0
+      until wget -q -O /dev/null "$${AUTH_URL}/health" 2>/dev/null; do
+        i=$$((i + 1)); [ "$$i" -le 90 ] || { log "Auth não respondeu em 3 min"; exit 1; }
+        sleep 2
+      done
+
+      log "extensões (vector, citext, pg_trgm)"
+      q -c "create extension if not exists vector with schema public; create extension if not exists citext with schema public; create extension if not exists pg_trgm with schema public;"
+
+      # Mesma régua do kit (hostgator-setup-kit/_common.sh), para o Dokploy tratar a
+      # reaplicação como o update.sh trata:
+      #  - BENIGNOS: o que a reaplicação PRODUZ por ser idempotente — igual a
+      #    BASELINE_ERROS_BENIGNOS;
+      #  - DISPUTA: banco ocupado ou conexão que caiu — aplicar de novo cura (o
+      #    arquivo é idempotente). Igual a BASELINE_ERROS_DE_DISPUTA;
+      #  - o resto é AVISO, como no update.sh ("o app pode ainda funcionar"), com uma
+      #    exceção abaixo.
+      BENIGNOS='already exists|multiple primary keys|multiple default values|is already a member|already a partition'
+      DISPUTA='deadlock detected|could not serialize access|lock timeout|could not obtain lock|terminating connection|server closed the connection|connection to server was lost|SSL connection has been closed unexpectedly|SSL SYSCALL error|remaining connection slots|too many clients|max client(s| connections) reached|the database system is (starting up|shutting down|in recovery mode|not yet accepting connections)|Temporary failure in name resolution|Connection refused|Connection timed out|timeout expired|Network (is )?unreachable'
+      # A exceção — o que é PRÓPRIO desta instalação e reprova o setup: aqui o
+      # Supabase sobe junto, e o schema `storage` nasce das migrations do serviço
+      # storage na partida dele. Se o baseline rodou antes, buckets e policies de
+      # arquivo não existem e o defeito só aparece quando alguém anexa um arquivo —
+      # o deploy de novo cura. E o psql que não chegou ao fim do arquivo. Um
+      # "does not exist" genérico NÃO entra: o kit o tolera numa reaplicação, e
+      # reprovar por ele travaria o redeploy de quem o kit deixaria atualizar.
+      FATAIS='relation "storage\.|schema "storage" does not exist|storage\.|o psql saiu com'
+
+      tem_schema="$$(q -c "select 1 from information_schema.tables where table_schema='public' and table_name='organizations' limit 1")"
+      if [ "$$tem_schema" = "1" ]; then
+        log "schema existe — reaplicando o baseline em modo update (erros 'já existe' são esperados)"
+        passada=1
+        while :; do
+          rc=0
+          psql "$$DB_URL" -q -f "$$BASELINE" >"$$BASELINE_LOG" 2>&1 || rc=$$?
+          inesperados="$$(grep -iE 'ERROR|FATAL' "$$BASELINE_LOG" | grep -viE "$$BENIGNOS" || true)"
+          # Sem ON_ERROR_STOP o psql sai 0 mesmo com erro de SQL: saída diferente de
+          # zero é o psql que NÃO chegou ao fim do arquivo.
+          if [ "$$rc" -ne 0 ]; then
+            inesperados="$$(printf '%s\n%s' "$$inesperados" "o psql saiu com código $$rc: $$(tail -1 "$$BASELINE_LOG")" | sed '/^$$/d')"
+          fi
+          [ -n "$$inesperados" ] || break
+          if [ "$$passada" -lt 3 ] && printf '%s\n' "$$inesperados" | grep -qiE "$$DISPUTA"; then
+            log "parte do baseline perdeu uma disputa com o sistema no ar — aplicando de novo (passada $$((passada + 1)) de 3)"
+            sleep $$((passada * $${BASELINE_ESPERA_S:-5}))
+            passada=$$((passada + 1))
+            continue
+          fi
+          break
+        done
+        if [ -n "$$inesperados" ]; then
+          if printf '%s\n' "$$inesperados" | grep -qiE "$$FATAIS"; then
+            log "o baseline NÃO se aplicou por inteiro — o schema ficaria incompleto. Erros:"
+            printf '%s\n' "$$inesperados" | head -20
+            log "se algum cita 'storage.', o serviço storage ainda não tinha criado o schema dele: confira os Logs do storage e faça Deploy de novo"
+            exit 1
+          fi
+          log "AVISO: erros fora dos esperados no baseline — o CRM segue, como no update.sh do kit:"
+          printf '%s\n' "$$inesperados" | head -10
+        fi
+      else
+        log "banco novo — aplicando o baseline (qualquer erro interrompe)"
+        psql "$$DB_URL" -v ON_ERROR_STOP=1 -q -f "$$BASELINE" >"$$BASELINE_LOG" 2>&1 \
+          || { tail -20 "$$BASELINE_LOG"; log "o baseline falhou num banco NOVO; o schema ficaria incompleto"; exit 1; }
+      fi
+      log "tabelas em public: $$(q -c "select count(*) from information_schema.tables where table_schema='public'")"
+
+      log "chave de cifra dos segredos"
+      q -v chave="$$NUVEMSHOP_OAUTH_ENCRYPTION_KEY" <<'SQL'
+      insert into private.app_secrets (name, value) values ('nuvemshop_oauth_key', :'chave')
+      on conflict (name) do update set value = excluded.value, updated_at = now();
+      SQL
+
+      log "primeiro administrador: $${OWNER_EMAIL}"
+      # Já existe? Não recria nem troca a senha (a pessoa pode tê-la trocado pela tela).
+      existe="$$(q -v email="$$OWNER_EMAIL" <<'SQL'
+      select 1 from auth.users where lower(email) = lower(:'email') limit 1;
+      SQL
+      )"
+      if [ "$$existe" != "1" ]; then
+        [ -n "$$OWNER_PASSWORD" ] || { log "o administrador ainda não existe e OWNER_PASSWORD está vazia — preencha no Environment e faça Deploy de novo"; exit 1; }
+        # O JSON sai do PRÓPRIO Postgres (json_build_object): aspas, barras e acentos
+        # na senha ou no e-mail viram JSON válido, sem montar texto à mão.
+        corpo="$$(q -v email="$$OWNER_EMAIL" -v senha="$$OWNER_PASSWORD" -v locale="$$LOCALE" <<'SQL'
+      select json_build_object('email', :'email', 'password', :'senha', 'email_confirm', true,
+                               'user_metadata', json_build_object('locale', :'locale'));
+      SQL
+      )"
+        wget -q -O /dev/null \
+          --header "apikey: $${SERVICE_ROLE_KEY}" \
+          --header "Authorization: Bearer $${SERVICE_ROLE_KEY}" \
+          --header "Content-Type: application/json" \
+          --post-data "$$corpo" "$${AUTH_URL}/admin/users" \
+          || { log "não consegui criar o usuário no Auth (confira SERVICE_ROLE_KEY e JWT_SECRET)"; exit 1; }
+      fi
+
+      q -v email="$$OWNER_EMAIL" -v locale="$$LOCALE" <<'SQL'
+      \o /dev/null
+      select set_config('imob.email', :'email', false), set_config('imob.locale', :'locale', false);
+      \o
+      do $$$$
+      declare v_org uuid; v_uid uuid;
+      begin
+        select id into v_uid from auth.users where lower(email) = lower(current_setting('imob.email'));
+        if v_uid is null then
+          raise exception 'usuário % não encontrado no auth.users', current_setting('imob.email');
+        end if;
+        select id into v_org from public.organizations where slug = 'minha-empresa';
+        if v_org is null then
+          insert into public.organizations (slug, display_name, legal_name, locale, created_by)
+          values ('minha-empresa', 'Minha Empresa', 'Minha Empresa', current_setting('imob.locale'), v_uid)
+          returning id into v_org;
+        end if;
+        insert into public.user_organizations (user_id, organization_id, role, accepted_at)
+        values (v_uid, v_org, 'admin', now())
+        on conflict (user_id, organization_id) do update set role = 'admin', revoked_at = null;
+        if not exists (select 1 from public.platform_admins where user_id = v_uid and revoked_at is null) then
+          insert into public.platform_admins (user_id, granted_by, scope, mfa_required, reason)
+          values (v_uid, v_uid, 'full', false, 'Bootstrap inicial do self-host (Dokploy)');
+        end if;
+      end $$$$;
+      SQL
+
+      log "pronto"
