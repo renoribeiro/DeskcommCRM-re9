@@ -28,6 +28,8 @@ check "primeira-instalacao.sh: sintaxe POSIX" sh -n "$SETUP"
 check "gateway-entrypoint.sh: sintaxe POSIX" sh -n "$GW"
 bash "$GERAR" --dominio CRMIMOB.Exemplo.com.br --email dono@exemplo.com.br --versao 1.57.0 > "$WORK/.env"; rc=$?
 check "gera sem erro" test "$rc" -eq 0
+check "a saída é 100% ASCII (o editor de variáveis do painel pode recusar acento)" \
+  bash -c '! LC_ALL=C grep -q "[^ -~	]" "$1"' _ "$WORK/.env"
 check "domínio normalizado para minúsculas" grep -qx 'DOMAIN=crmimob.exemplo.com.br' "$WORK/.env"
 check "versão fixa, não tag móvel" grep -qx 'IMAGE_TAG=1.57.0' "$WORK/.env"
 check "cadastro só por convite (CRM e Auth fecham juntos)" \

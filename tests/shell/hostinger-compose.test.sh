@@ -40,6 +40,12 @@ echo "hostinger: o arquivo gerado está em dia com a origem"
 check "pnpm compose:hostinger --conferir" \
   bash -c 'cd "$1" && node_modules/.bin/tsx scripts/gerar-compose-hostinger.ts --conferir' _ "$ROOT"
 
+# O editor YAML do Docker Manager da Hostinger recusa o arquivo no primeiro
+# caractere acentuado (medido: "O arquivo YAML não pôde ser processado", linha 1
+# marcada no "à"). O gerador escreve tudo em ASCII; isto prende a regra.
+check "o arquivo é 100% ASCII (o editor da Hostinger recusa acento)" \
+  bash -c '! LC_ALL=C grep -q "[^ -~	]" "$1"' _ "$COMPOSE"
+
 if ! docker compose version >/dev/null 2>&1; then
   echo "  - pulado: docker compose ausente (o resto do gate precisa dele)"
   [ "$fail" -eq 0 ] && echo "OK — o que pôde ser medido passou." || echo "FALHOU."
