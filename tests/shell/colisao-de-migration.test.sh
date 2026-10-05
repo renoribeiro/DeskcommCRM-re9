@@ -75,6 +75,10 @@ unset $(git rev-parse --local-env-vars)
 export GIT_CEILING_DIRECTORIES="$TMP"
 export GIT_AUTHOR_NAME="Teste" GIT_AUTHOR_EMAIL="teste@exemplo.invalid"
 export GIT_COMMITTER_NAME="Teste" GIT_COMMITTER_EMAIL="teste@exemplo.invalid"
+# O script reconhece "o PR de agora" pelo GITHUB_REF (refs/pull/N/merge). Herdado do CI, ele
+# faz o PR SIMULADO de mesmo número sumir da medição: no PR #7 do fork, os casos com o gh falso
+# listando "#7" reprovaram por isso. Nenhum caso aqui depende do ref de quem roda.
+unset GITHUB_REF
 
 # ── gh FALSO, para TODOS os casos: sem rede e sem depender do gh de quem roda ──────────
 # Ele HONRA o contrato da chamada real — se ignorasse os argumentos, trocar `--state open`
