@@ -4,31 +4,24 @@
  *   pnpm compose:hostinger              # escreve o arquivo
  *   pnpm compose:hostinger --conferir   # só confere; sai 1 se estiver fora de dia
  *
- * O Docker Manager da Hostinger recebe SÓ o YAML, sem o repositório ao lado. O
- * compose do Dokploy monta arquivos do clone (init do banco, gateway, script de
- * preparo); aqui eles entram no próprio YAML, em `configs:` com `content:`.
+ * O editor YAML do Docker Manager da Hostinger é mais estrito que o Docker
+ * Compose, e recusa o arquivo inteiro com "O arquivo YAML não pôde ser
+ * processado" (marcando a linha 1) sem dizer o porquê. Medido em duas rodadas:
+ * recusou a versão com acento e, depois, a versão sem acento que tinha blocos
+ * `x-` no topo, `<<:` e `configs` com os arquivos do Supabase embutidos. Por
+ * isso o molde usa só o que o YAML do Typebot, que o painel aceita, já usa, e
+ * os arquivos do Supabase são baixados da tag da versão pelo serviço `arquivos`.
  *
- * Duas regras, e cada uma evita um defeito silencioso:
+ * O gerador faz duas coisas, e cada uma evita um defeito silencioso:
  *
- * 1. **Todo `$` vira `$$`.** O compose interpola `${…}` em qualquer valor do
- *    arquivo, `content` inclusive. Um `$POSTGRES_PASSWORD` dentro do script de
- *    preparo seria trocado pelo valor do painel na hora do deploy — ou por vazio —
- *    e o SQL `$$ … $$` das funções viraria `$ … $`. O gate confere, pela saída do
- *    próprio `docker compose config`, que cada arquivo chega ao contêiner byte a
- *    byte igual ao do repositório.
- *
- * 2. **O arquivo inteiro é ASCII.** O editor YAML do Docker Manager da Hostinger
- *    recusa o arquivo no primeiro caractere acentuado ("O arquivo YAML não pôde
- *    ser processado", com a linha 1 marcada no "à"). Comentários e mensagens do
- *    molde perdem o acento (`asciiDoTexto`); os arquivos embutidos que têm acento
- *    (mensagens do script de preparo) entram como string YAML entre aspas
- *    duplas com escapes `\uXXXX` — o contêiner recebe os MESMOS bytes, com
- *    acento, e o gate confere.
- *
- * 3. **A lista de variáveis do CRM não é copiada à mão.** Ela sai do bloco
+ * 1. **A lista de variáveis do CRM não é copiada à mão.** Ela sai do bloco
  *    `x-crm-env` do `docker-compose.dokploy.yml`, que já é conferido contra
- *    `lib/env.ts`; só `DEPLOY_MODE` muda. Variável nova no CRM chega às duas
- *    instalações pelo mesmo lugar.
+ *    `lib/env.ts`, e entra sob `environment: &crm-env` do app (o worker usa
+ *    `*crm-env`). Mudam só DEPLOY_MODE e os endereços internos (sem o prefixo
+ *    `imobcrm-`, que só existe na rede compartilhada do Dokploy).
+ *
+ * 2. **O arquivo inteiro é ASCII.** Comentários e mensagens perdem o acento
+ *    (`asciiDoTexto`), e o gerador recusa produzir arquivo com outro caractere.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -65,20 +58,42 @@ function ler(caminho: string): string {
   return readFileSync(join(RAIZ, caminho), "utf8");
 }
 
-/** O bloco `x-crm-env` do compose do Dokploy, com o DEPLOY_MODE da Hostinger. */
-export function blocoCrmEnv(composeDokploy: string): string {
+/**
+ * As variáveis do CRM do bloco `x-crm-env` do compose do Dokploy, prontas para
+ * ficar sob `environment:` do app (recuo `indentacao`), com DEPLOY_MODE=hostinger
+ * e os endereços internos pelos NOMES DOS SERVIÇOS: no Dokploy eles levam o
+ * prefixo `imobcrm-` porque o app também está na rede compartilhada do Traefik;
+ * na Hostinger cada projeto tem a rede dele, e o apelido não existe.
+ */
+export function variaveisDoCrm(composeDokploy: string, indentacao: string): string {
   const inicio = composeDokploy.indexOf("x-crm-env: &crm-env\n");
   const fim = composeDokploy.indexOf("\nservices:\n");
   if (inicio < 0 || fim < 0 || fim < inicio) {
     throw new Error(`${COMPOSE_DOKPLOY}: bloco "x-crm-env: &crm-env" … "services:" não encontrado`);
   }
-  const bloco = composeDokploy.slice(inicio, fim).replace(/\n+$/, "");
+  let bloco = composeDokploy
+    .slice(inicio + "x-crm-env: &crm-env\n".length, fim)
+    .replace(/\n+$/, "");
   if (!bloco.includes(DEPLOY_MODE_DOKPLOY)) {
     throw new Error(
       `${COMPOSE_DOKPLOY}: a linha de DEPLOY_MODE mudou de forma — atualize DEPLOY_MODE_DOKPLOY neste gerador`,
     );
   }
-  return bloco.replace(DEPLOY_MODE_DOKPLOY, DEPLOY_MODE_HOSTINGER);
+  bloco = bloco
+    .replace(DEPLOY_MODE_DOKPLOY, DEPLOY_MODE_HOSTINGER)
+    .replace(/imobcrm-([a-z]+)/g, "$1")
+    .replace(
+      "  # ── Endereços (apelidos únicos da rede privada; ver o cabeçalho) ──",
+      "  # ── Endereços internos (os nomes dos serviços deste projeto) ──",
+    );
+  return bloco
+    .split("\n")
+    .map((linha) => {
+      if (linha.length === 0) return "";
+      if (!linha.startsWith("  ")) throw new Error(`${COMPOSE_DOKPLOY}: linha fora do recuo do x-crm-env: ${linha}`);
+      return indentacao + linha.slice(2);
+    })
+    .join("\n");
 }
 
 /** Troca o que não é ASCII por um equivalente ASCII, em texto que é só para leitura. */
@@ -101,52 +116,6 @@ export function asciiDoTexto(texto: string): string {
   return semAcento;
 }
 
-/**
- * Arquivo com caractere não ASCII, como string YAML entre aspas duplas, uma linha
- * do arquivo por linha do YAML. Cada linha termina em `\n\` (quebra escapada: o
- * parser junta sem espaço) e espaço ou tab no começo da linha vira `\x20`/`\t`,
- * porque o YAML descarta o recuo de uma linha de continuação.
- */
-export function arquivoComoAspasDuplas(conteudo: string, indentacao: string): string {
-  const escapar = (trecho: string): string =>
-    Array.from(trecho)
-      .map((c) => {
-        const cp = c.codePointAt(0)!;
-        if (c === "\\") return "\\\\";
-        if (c === '"') return '\\"';
-        if (c === "$") return "$$";
-        if (c === "\t") return "\\t";
-        if (cp < 0x20 || cp === 0x7f) return "\\x" + cp.toString(16).padStart(2, "0");
-        if (cp > 0x7e) {
-          return cp > 0xffff
-            ? "\\U" + cp.toString(16).padStart(8, "0")
-            : "\\u" + cp.toString(16).padStart(4, "0");
-        }
-        return c;
-      })
-      .join("");
-  const linhas = conteudo.split("\n");
-  const ultima = linhas.pop() ?? "";
-  const partes = linhas.map((linha, i) => {
-    const corpo = escapar(linha).replace(/^ /, "\\x20");
-    return (i === 0 ? '"' : indentacao) + corpo + "\\n\\";
-  });
-  partes.push((linhas.length === 0 ? '"' : indentacao) + escapar(ultima).replace(/^ /, "\\x20") + '"');
-  return partes.join("\n");
-}
-
-/** Conteúdo de arquivo pronto para `content: |`, com `$` escapado e indentado. */
-export function arquivoEmbutido(conteudo: string, indentacao: string): string {
-  if (/^[ \t]/.test(conteudo)) {
-    // `|` deduz a indentação da primeira linha: começar com espaço a quebraria.
-    throw new Error("arquivo embutido não pode começar com espaço ou tab");
-  }
-  const linhas = conteudo.replace(/\n$/, "").split("\n");
-  return linhas
-    .map((linha) => (linha.length === 0 ? "" : indentacao + linha.replaceAll("$", "$$$$")))
-    .join("\n");
-}
-
 export function gerar(lerArquivo: (caminho: string) => string = ler): string {
   const molde = lerArquivo(MOLDE);
   const inicio = molde.indexOf(INICIO_DO_CABECALHO);
@@ -154,22 +123,9 @@ export function gerar(lerArquivo: (caminho: string) => string = ler): string {
 
   const saida: string[] = AVISO_DE_GERADO.map(asciiDoTexto);
   for (const linha of molde.slice(inicio).split("\n")) {
-    if (linha === "#@crm-env") {
-      saida.push(asciiDoTexto(blocoCrmEnv(lerArquivo(COMPOSE_DOKPLOY))));
-      continue;
-    }
-    const embutido = linha.match(/^(\s+)#@arquivo (\S+)$/);
-    if (embutido) {
-      const conteudo = lerArquivo(embutido[2]!);
-      if (/[^\x00-\x7f]/.test(conteudo)) {
-        // A linha anterior é `content: |`: vira `content: "…"`, na mesma chave.
-        const anterior = saida.pop() ?? "";
-        const chave = anterior.match(/^(\s+content:) \|$/);
-        if (!chave) throw new Error(`${MOLDE}: #@arquivo ${embutido[2]} sem "content: |" na linha anterior`);
-        saida.push(`${chave[1]} ${arquivoComoAspasDuplas(conteudo, embutido[1]!)}`);
-      } else {
-        saida.push(arquivoEmbutido(conteudo, embutido[1]!));
-      }
+    const crmEnv = linha.match(/^(\s+)#@crm-env$/);
+    if (crmEnv) {
+      saida.push(asciiDoTexto(variaveisDoCrm(lerArquivo(COMPOSE_DOKPLOY), crmEnv[1]!)));
       continue;
     }
     if (linha.includes("#@")) throw new Error(`${MOLDE}: marcador desconhecido: ${linha.trim()}`);
