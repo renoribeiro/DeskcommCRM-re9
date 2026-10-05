@@ -8,6 +8,12 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [1.58.0] — 2026-10-05
+
+### Adicionado
+
+- **Instalação pelo Docker Manager da Hostinger, com um YAML só** Quem usa o Docker Manager do painel da Hostinger agora instala o CRM inteiro, com o Supabase na mesma VPS, colando um único arquivo: `docker-compose.hostinger.yml`. Ele é autocontido — os arquivos do Supabase e o script de preparo vêm dentro dele, porque o painel recebe só o YAML —, usa o Traefik que a Hostinger instala (rotas com o nome do projeto, certificado `letsencrypt`) e não publica porta nenhuma na VPS. As senhas e chaves saem do mesmo `gerar-env.sh` da instalação pelo Dokploy. As telas Administração › E-mail e Administração › Cadastro passam a reconhecer esta instalação e a dizer que o e-mail do login e o modo de cadastro se ajustam nas variáveis do projeto, com uma nova implantação. O passo a passo está em `docs/imobiliario/05-instalacao-hostinger-docker-manager.md`.
+
 ## [1.57.0] — 2026-09-28
 
 ### Adicionado
@@ -8843,7 +8849,8 @@ Primeira versão marcada do DeskcommCRM. O projeto vinha sendo desenvolvido publ
 
 - **Node 22 é obrigatório para desenvolvimento.** A suíte de invariantes instancia o cliente do Supabase, que exige o `WebSocket` global — nativo apenas a partir do Node 22. Isso não afeta quem apenas hospeda: a VPS roda a imagem pronta.
 
-[Não lançado]: https://github.com/melgarafael/DeskcommCRM/compare/v1.57.0...HEAD
+[Não lançado]: https://github.com/melgarafael/DeskcommCRM/compare/v1.58.0...HEAD
+[1.58.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.57.0...v1.58.0
 [1.57.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.56.0...v1.57.0
 [1.56.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.55.0...v1.56.0
 [1.55.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.54.0...v1.55.0
